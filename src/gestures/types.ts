@@ -60,6 +60,10 @@ export interface GestureState {
   handDetected: boolean;
   isPinching: boolean;
   indexPosition: GesturePoint;
+  /** Wrist position (normalized 0-1) — used for face-proximity detection */
+  wristPosition: GesturePoint;
+  /** Hand size (wrist→middle_mcp in normalized units) — scale reference */
+  handSize: number;
   pinchDistance: number;
   confidence: number;
   orientation: HandOrientation;
@@ -69,6 +73,8 @@ export interface GestureState {
   /** Secondary hand state (null if only one hand visible) */
   secondHand: {
     indexPosition: GesturePoint;
+    wristPosition: GesturePoint;
+    handSize: number;
     isPinching: boolean;
     pinchDistance: number;
     confidence: number;

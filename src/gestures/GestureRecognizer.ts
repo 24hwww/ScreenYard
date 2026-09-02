@@ -20,6 +20,8 @@ interface PerHandState {
   handDetected: boolean;
   isPinching: boolean;
   indexPosition: GesturePoint;
+  wristPosition: GesturePoint;
+  handSize: number;
   pinchDistance: number;
   confidence: number;
   orientation: HandOrientation;
@@ -65,6 +67,8 @@ export class GestureRecognizer {
       handDetected: primary?.handDetected ?? false,
       isPinching: primary?.isPinching ?? false,
       indexPosition: primary?.indexPosition ?? { x: 0, y: 0 },
+      wristPosition: primary?.wristPosition ?? { x: 0, y: 0 },
+      handSize: primary?.handSize ?? 0,
       pinchDistance: primary?.pinchDistance ?? 0,
       confidence: primary?.confidence ?? 0,
       orientation: primary?.orientation ?? 'side',
@@ -74,6 +78,8 @@ export class GestureRecognizer {
       secondHand: secondary?.handDetected
         ? {
             indexPosition: secondary.indexPosition,
+            wristPosition: secondary.wristPosition,
+            handSize: secondary.handSize,
             isPinching: secondary.isPinching,
             pinchDistance: secondary.pinchDistance,
             confidence: secondary.confidence,
@@ -124,6 +130,8 @@ export class GestureRecognizer {
         handDetected: false,
         isPinching: false,
         indexPosition: { x: 0, y: 0 },
+        wristPosition: { x: 0, y: 0 },
+        handSize: 0,
         pinchDistance: 0,
         confidence: 0,
         orientation: 'side',
@@ -156,11 +164,18 @@ export class GestureRecognizer {
     state.confidence = confidence;
     state.orientation = orientation;
     state.pose = pose;
+    state.handSize = result.handSize;
 
     // Smooth position
     const smoother = handIndex === 0 ? this.primarySmoother : this.secondarySmoother;
     const smoothed = smoother.smooth(indexTip);
     state.indexPosition = smoothed;
+
+    // Wrist position (landmark 0) — mirrored to match stage coordinates
+    const wristLandmark = result.landmarks3D[0];
+    if (wristLandmark) {
+      state.wristPosition = { x: wristLandmark.x, y: wristLandmark.y };
+    }
 
     // Pinch distance (normalized by hand size for robustness)
     const pinchDistance = normalizedPinchDistance;

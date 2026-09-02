@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { usePictureInPicture } from '../hooks/usePictureInPicture';
+import { GestureState } from '../gestures/types';
 import './VirtualCamera.css';
 
 interface VirtualCameraOutputProps {
@@ -18,6 +19,8 @@ interface VirtualCameraOutputProps {
     selected: boolean;
     data: any;
   }>;
+  /** Current gesture state for two-hand pinch line rendering */
+  gestureState?: GestureState;
 }
 
 /**
@@ -42,6 +45,7 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
   stageRef,
   active,
   windows,
+  gestureState,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -54,6 +58,9 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
   // without recreating the stream on every window change
   const windowsRef = useRef(windows);
   windowsRef.current = windows;
+
+  const gestureStateRef = useRef(gestureState);
+  gestureStateRef.current = gestureState;
 
   // Detect if running as extension (chrome.runtime available) or dev server
   const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
@@ -284,6 +291,47 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
             ctx.stroke();
           }
         }
+      }
+
+      // Draw two-hand pinch line if both hands are pinching
+      // (and not resizing an element)
+      const gs = gestureStateRef.current;
+      if (gs && gs.isPinching && gs.secondHand?.isPinching) {
+        const p0 = gs.indexPosition;
+        const p1 = gs.secondHand.indexPosition;
+        const x1 = p0.x * OUTPUT_WIDTH;
+        const y1 = p0.y * OUTPUT_HEIGHT;
+        const x2 = p1.x * OUTPUT_WIDTH;
+        const y2 = p1.y * OUTPUT_HEIGHT;
+
+        // Draw line (dashed, blue)
+        ctx.save();
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw endpoints
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(x1, y1, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x2, y2, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw distance label
+        const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+        ctx.fillStyle = '#5eead4';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${(dist * 100).toFixed(0)}%`, (x1 + x2) / 2, (y1 + y2) / 2 - 8);
+        ctx.textAlign = 'left';
+        ctx.restore();
       }
 
       // FPS counter

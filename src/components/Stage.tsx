@@ -102,6 +102,8 @@ export const Stage: React.FC<StageProps> = ({
     handDetected: false,
     isPinching: false,
     indexPosition: { x: 0, y: 0 },
+    wristPosition: { x: 0, y: 0 },
+    handSize: 0,
     pinchDistance: 0,
     confidence: 0,
     orientation: 'side',
@@ -119,6 +121,12 @@ export const Stage: React.FC<StageProps> = ({
   // Trash zone
   const [trashVisible, setTrashVisible] = useState(false);
   const [trashProgress, setTrashProgress] = useState(0);
+
+  // Two-hand pinch line: when both hands are pinching, draw a line between them
+  const [twoHandLine, setTwoHandLine] = useState<{
+    x1: number; y1: number; x2: number; y2: number;
+    distance: number;
+  } | null>(null);
 
   // Emoji reactions
   const [emojis, setEmojis] = useState<EmojiItem[]>([]);
@@ -430,6 +438,25 @@ export const Stage: React.FC<StageProps> = ({
 
       switch (event.type) {
         case 'pointer-move': {
+          // ─── Update two-hand pinch line ───
+          // When both hands are pinching (but not resizing an element),
+          // draw a line between them sized by the separation.
+          const gs = gestureRecognizer.getState();
+          if (gs.isPinching && gs.secondHand?.isPinching && !twoHandResizeRef.current) {
+            const p0 = gs.indexPosition;
+            const p1 = gs.secondHand.indexPosition;
+            const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+            setTwoHandLine({
+              x1: p0.x * rect.width,
+              y1: p0.y * rect.height,
+              x2: p1.x * rect.width,
+              y2: p1.y * rect.height,
+              distance: dist,
+            });
+          } else if (twoHandLine) {
+            setTwoHandLine(null);
+          }
+
           // ─── Two-hand resize: scale element based on hand distance ───
           if (twoHandResizeRef.current && event.isPinching) {
             const resize = twoHandResizeRef.current;
@@ -611,6 +638,8 @@ export const Stage: React.FC<StageProps> = ({
           if (twoHandResizeRef.current) {
             twoHandResizeRef.current = null;
           }
+          // Clean up two-hand pinch line
+          setTwoHandLine(null);
           const dragState = gestureDragStateRef.current.get(handIdx);
           if (dragState) {
             const win = state.windows.find((w) => w.id === dragState.windowId);
@@ -668,10 +697,39 @@ export const Stage: React.FC<StageProps> = ({
             break;
           }
 
+          // ─── Face proximity check ───
+          // Don't spawn elements when a hand is near the face.
+          // The face is typically in the upper-center of the frame.
+          // We use wrist position: if wrist Y < 0.4 (upper area) AND
+          // wrist X is in the central band (0.2-0.8), the hand is near
+          // the face. Also check handSize: when hand is near face, it
+          // appears larger (closer to camera).
+          const currentState = gestureRecognizer.getState();
+          const isNearFace = (wrist: { x: number; y: number }, handSize: number) => {
+            if (!wrist) return false;
+            const inUpperArea = wrist.y < 0.4;
+            const inCentralBand = wrist.x > 0.2 && wrist.x < 0.8;
+            const isLarge = handSize > 0.25; // hand appears big = close to camera
+            return inUpperArea && inCentralBand && isLarge;
+          };
+          const primaryNearFace = isNearFace(currentState.wristPosition, currentState.handSize);
+          const secondaryNearFace = currentState.secondHand
+            ? isNearFace(currentState.secondHand.wristPosition, currentState.secondHand.handSize)
+            : false;
+          if (primaryNearFace || secondaryNearFace) {
+            if (fingerHoldTimerRef.current !== null) {
+              clearTimeout(fingerHoldTimerRef.current);
+              fingerHoldTimerRef.current = null;
+            }
+            setFingerHoldProgress(0);
+            fingerHoldStartRef.current = null;
+            lastFingerCountRef.current = 0;
+            break;
+          }
+
           // Orientation 'side' with pinch pose can produce false finger
           // counts. Block spawning when orientation is side and pose is
           // pinch for ANY hand (not just the primary).
-          const currentState = gestureRecognizer.getState();
           const primarySidePinch = currentState.orientation === 'side' && currentState.pose === 'pinch';
           const secondarySidePinch = currentState.secondHand?.orientation === 'side' && currentState.secondHand?.pose === 'pinch';
           if (primarySidePinch || secondarySidePinch) {
@@ -834,6 +892,34 @@ export const Stage: React.FC<StageProps> = ({
         />
       )}
 
+      {/* Two-hand pinch line: shows distance between both pinching hands */}
+      {twoHandLine && (
+        <svg className="two-hand-line" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
+          <line
+            x1={twoHandLine.x1}
+            y1={twoHandLine.y1}
+            x2={twoHandLine.x2}
+            y2={twoHandLine.y2}
+            stroke="rgba(59, 130, 246, 0.8)"
+            strokeWidth={4}
+            strokeLinecap="round"
+            strokeDasharray="8 4"
+          />
+          <circle cx={twoHandLine.x1} cy={twoHandLine.y1} r={6} fill="#3b82f6" />
+          <circle cx={twoHandLine.x2} cy={twoHandLine.y2} r={6} fill="#3b82f6" />
+          <text
+            x={(twoHandLine.x1 + twoHandLine.x2) / 2}
+            y={(twoHandLine.y1 + twoHandLine.y2) / 2 - 12}
+            fill="#5eead4"
+            fontSize={14}
+            fontFamily="sans-serif"
+            textAnchor="middle"
+          >
+            {(twoHandLine.distance * 100).toFixed(0)}%
+          </text>
+        </svg>
+      )}
+
       {/* Debug panel */}
       <DebugPanel gestureState={gestureState} visible={isDebugVisible} />
 
@@ -874,6 +960,7 @@ export const Stage: React.FC<StageProps> = ({
         stageRef={stageRef}
         active={vcamActive}
         windows={state.windows}
+        gestureState={gestureState}
       />
     </div>
   );
