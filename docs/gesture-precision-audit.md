@@ -136,18 +136,14 @@ el hold. Si el conteo de dedos cambia antes de completarse, se cancela.
 
 ## Mejoras adicionales identificadas (no implementadas aún)
 
-### A. Empaquetar WASM y modelo de MediaPipe localmente
+### A. ~~Empaquetar WASM y modelo de MediaPipe localmente~~ ✅ Implementado
 
-**Actual:** El WASM se carga desde `cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm`
+**Antes:** El WASM se cargaba desde `cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm`
 y el modelo desde `storage.googleapis.com`.
 
-**Problemas:**
-- No funciona offline
-- `@latest` introduce volatilidad (una versión nueva puede romper la API)
-- Latencia adicional en cada carga
-
-**Recomendación:** Descargar el WASM y el modelo `.task` a `public/mediapipe/`
-y referenciarlos localmente. Pinear la versión exacta (ej. `0.10.18`).
+**Ahora:** WASM y modelo se sirven desde `public/mediapipe/wasm/` y
+`public/mediapipe/hand_landmarker.task`. La versión está pineada a `0.10.35`.
+El script `build:ext` copia estos archivos a `dist/mediapipe/` automáticamente.
 
 ### B. Web Worker para inferencia
 
@@ -160,17 +156,15 @@ especialmente en dispositivos lentos.
 MediaPipe Tasks Vision soporta ejecución en Workers. Comunicar resultados via
 `postMessage` con `Transferable` para evitar copias.
 
-### C. Handedness estable (izquierda/derecha)
+### C. ~~Handedness estable (izquierda/derecha)~~ ✅ Implementado
 
-**Actual:** `handIndex` (0, 1) se basa en el orden de detección, que puede
-cambiar frame a frame. La "mano primaria" puede cambiar impredeciblemente.
+**Antes:** `handIndex` (0, 1) se basaba en el orden de detección, que podía
+cambiar frame a frame. La "mano primaria" podía cambiar impredeciblemente.
 
-**Recomendación:** MediaPipe devuelve `handednesses` (Left/Right con score).
-Usar esto para asignar establemente handIndex=0 → izquierda, handIndex=1 →
-derecha (o viceversa según preferencia del usuario).
-
-**Estado:** Se añadió la lectura de `handednesses` en el bucle detect, pero
-aún no se usa para reasignar handIndex. Queda como trabajo futuro.
+**Ahora:** Se usa `handednesses` de MediaPipe (Left/Right con score) para
+asignar stablemente handIndex=0 → izquierda (mano primaria), handIndex=1 →
+derecha. Se tiene en cuenta el mirrorX para que la asignación sea consistente
+con la posición en pantalla.
 
 ### D. Kalman Filter como alternativa
 
@@ -200,13 +194,14 @@ se estimaron basándose en valores típicos de MediaPipe.
 distancias de cámara, y iluminación. Ajustar thresholds con percentiles
 (ej. pinch threshold = percentil 5 de distancia normalizada durante pinch real).
 
-### G. Frame skipping adaptativo
+### G. ~~Frame skipping adaptativo~~ ✅ Implementado
 
-**Actual:** Se procesa cada frame de video.
+**Antes:** Se procesaba cada frame de video, sin importar cuánto tardara la inferencia.
 
-**Recomendación:** Si el tiempo de inferencia excede el intervalo entre frames,
-saltar frames para mantener el pipeline en tiempo real. Medir `performance.now()`
-antes/después de `detectForVideo` y saltar si > 33ms (30fps budget).
+**Ahora:** Se mide el tiempo de inferencia con `performance.now()`. Si excede
+33ms (budget de 30fps), se calcula cuántos frames saltar
+(`ceil(inferenceTime / budget) - 1`) para mantener el pipeline en tiempo real.
+Esto previene acumulación de lag en dispositivos lentos.
 
 ---
 
@@ -240,8 +235,21 @@ antes/después de `detectForVideo` y saltar si > 33ms (30fps budget).
 | 2 | Pinch normalizado por tamaño de mano | `HandTracker.ts`, `GestureRecognizer.ts` | Pinch consistente independientemente de distancia/usuario |
 | 3 | Finger counting con ángulos 3D | `HandTracker.ts` | Robusto a rotación de mano y ángulo de cámara |
 | 4 | Filtrado por confianza | `HandTracker.ts` | Menos falsos positivos |
-| 5 | requestVideoFrameCallback | `HandTracker.ts` | Menos CPU/GPU, alineado con tasa de frames |
+| 5 | requestVideoFrameCallback + fallback rAF | `HandTracker.ts`, `Stage.tsx` | Menos CPU/GPU, alineado con tasa de frames |
 | 6 | Fallback GPU→CPU | `HandTracker.ts` | Funciona en dispositivos sin GPU |
 | 7 | Hold delay + feedback visual para 1 finger | `Stage.tsx`, `VirtualCursor.tsx` | Menos activaciones accidentales, UX clara |
+| 8 | Handedness estable (izquierda/derecha) | `HandTracker.ts` | handIndex consistente, no cambia frame a frame |
+| 9 | Frame skipping adaptativo | `HandTracker.ts` | Mantiene pipeline en tiempo real en dispositivos lentos |
+| 10 | MediaPipe local (offline) | `public/mediapipe/`, `build-extension.mjs` | Funciona sin internet, versión pineada |
+| 11 | Tracking video visible (no display:none) | `Stage.tsx` | rVFC funciona correctamente, frames se decodifican |
 
 **Tests:** 40 tests pasan (8 nuevos/actualizados para One Euro Filter y pinch normalizado).
+
+### Mejoras pendientes (no implementadas)
+
+| # | Mejora | Razón de no implementar |
+|---|---|---|
+| B | Web Worker para inferencia | Complejidad alta, requiere refactor del pipeline |
+| D | Kalman Filter | One Euro es suficiente para tracking 2D |
+| E | TensorFlow.js como alternativa | MediaPipe local ya resuelve el problema offline |
+| F | Tuning con datos reales | Requiere recolección de datos de usuarios |

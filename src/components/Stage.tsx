@@ -159,9 +159,13 @@ export const Stage: React.FC<StageProps> = ({
         setCameraStatus('ready');
 
         const trackingVideo = document.createElement('video');
-        trackingVideo.style.display = 'none';
+        // Visually hidden but still rendered (NOT display:none) so the browser
+        // decodes frames and requestVideoFrameCallback fires correctly.
+        // display:none prevents frame composition, which breaks rVFC.
+        trackingVideo.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;top:-1px;left:-1px;';
         trackingVideo.autoplay = true;
         trackingVideo.playsInline = true;
+        trackingVideo.muted = true;
         trackingVideo.srcObject = stream;
         await trackingVideo.play();
         document.body.appendChild(trackingVideo);

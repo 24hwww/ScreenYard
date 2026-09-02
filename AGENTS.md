@@ -151,19 +151,26 @@ getUserMedia → <video> oculto → MediaPipe HandLandmarker
   lugar de comparar coordenadas Y. Robusto a rotación y ángulo de cámara.
 - **Filtrado por confianza**: detecciones con `visibility < 0.5` se descartan.
 - **requestVideoFrameCallback**: sincroniza la inferencia con los frames reales
-  de la webcam (más eficiente que `requestAnimationFrame`). Fallback automático.
+  de la webcam (más eficiente que `requestAnimationFrame`). Fallback automático
+  a rAF si rVFC no dispara en 500ms (ej. video oculto con display:none).
 - **Fallback GPU→CPU**: si la inicialización con `delegate: 'GPU'` falla,
   reintenta con `delegate: 'CPU'`.
 - **Hold delay de 600ms para 1-finger**: el gesto de 1 dedo requiere sostenerse
   600ms para activar edición de texto, con anillo de progreso SVG visible.
+- **Handedness estable**: usa `handednesses` de MediaPipe para asignar
+  handIndex consistente (0=izquierda, 1=derecha) en lugar del orden de detección.
+- **Frame skipping adaptativo**: mide el tiempo de inferencia; si excede 33ms
+  (30fps budget), salta frames para mantener el pipeline en tiempo real.
+- **MediaPipe local (offline)**: WASM y modelo se sirven desde `public/mediapipe/`
+  en lugar de CDN. La extensión funciona sin conexión a internet.
 
 Ver `docs/gesture-precision-audit.md` para el análisis completo.
 
 ## Notas importantes
 
-- **MediaPipe se carga desde CDN**: `HandTracker.initialize` descarga WASM y modelo
-  desde `cdn.jsdelivr.net` y `storage.googleapis.com`. La extensión no funciona
-  offline. Para uso offline, empaquetar WASM y modelo en `dist/`.
+- **MediaPipe se carga localmente**: WASM y modelo se sirven desde `public/mediapipe/`
+  (no CDN). La extensión funciona offline. El script `build:ext` copia estos archivos
+  a `dist/mediapipe/` automáticamente.
 - **Cámara obligatoria**: `Stage` pide `getUserMedia` al montar. Sin permiso de
   cámara, muestra error pero la app no es funcional.
 - **Manifest V3**: `public/manifest.json` solo pide permiso `activeTab`. El

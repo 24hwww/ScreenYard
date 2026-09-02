@@ -5,7 +5,7 @@
  * 3. Ready to load as unpacked extension
  */
 import { execSync } from 'child_process';
-import { copyFileSync, mkdirSync, existsSync } from 'fs';
+import { copyFileSync, mkdirSync, existsSync, cpSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -42,6 +42,24 @@ for (const size of [16, 48, 128]) {
   } else {
     console.log(`  ⚠ icons/icon${size}.png not found — run "node scripts/generate-icons.mjs" first`);
   }
+}
+
+// Copy MediaPipe WASM + model for offline support
+const mediapipeSrc = join(PUBLIC, 'mediapipe');
+const mediapipeDist = join(DIST, 'mediapipe');
+if (existsSync(mediapipeSrc)) {
+  mkdirSync(mediapipeDist, { recursive: true });
+  cpSync(join(mediapipeSrc, 'wasm'), join(mediapipeDist, 'wasm'), { recursive: true });
+  console.log('  ✓ mediapipe/wasm/');
+  const modelSrc = join(mediapipeSrc, 'hand_landmarker.task');
+  if (existsSync(modelSrc)) {
+    copyFileSync(modelSrc, join(mediapipeDist, 'hand_landmarker.task'));
+    console.log('  ✓ mediapipe/hand_landmarker.task');
+  } else {
+    console.log('  ⚠ mediapipe/hand_landmarker.task not found');
+  }
+} else {
+  console.log('  ⚠ mediapipe/ not found — hand tracking will use CDN fallback');
 }
 
 // Step 3: Done
