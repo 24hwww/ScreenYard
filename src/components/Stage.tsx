@@ -143,20 +143,18 @@ export const Stage: React.FC<StageProps> = ({
   const fingerHoldStartRef = useRef<{ x: number; y: number } | null>(null);
   const FINGER_HOLD_MS = 2000;
 
-  // Map finger count → element type (1=Text, 2=Image, 3=Shape, 4=Counter)
-  // 5 fingers = camera switch (special, no element spawn)
+  // Map finger count → element type (1=Text, 2=Image, 3=Shape)
+  // 4 fingers = camera switch (special, no element spawn)
   const FINGER_TO_ELEMENT: Record<number, WindowType> = {
     1: 'text',
     2: 'image',
     3: 'shape',
-    4: 'counter',
   };
   const FINGER_LABELS: Record<number, string> = {
     1: 'Text',
     2: 'Image',
     3: 'Shape',
-    4: 'Counter',
-    5: 'Switch Camera',
+    4: 'Switch Camera',
   };
 
   // Spawn an emoji at a position
@@ -556,17 +554,16 @@ export const Stage: React.FC<StageProps> = ({
             fingerHoldTimerRef.current = null;
           }
 
-          // 1-4 fingers → start hold timer to spawn corresponding element
-          // 5 fingers → start hold timer to switch camera
+          // 1-3 fingers → start hold timer to spawn corresponding element
+          // 4 fingers → start hold timer to switch camera
           // 0 fingers → cancel
           // Block spawning if an element is already selected (avoid conflicts)
           const hasSelected = state.windows.some((w) => w.selected);
-          if (hasSelected && newCount >= 1 && newCount <= 4) {
-            // Deselect on 0 fingers instead of spawning
+          if (hasSelected && newCount >= 1 && newCount <= 3) {
             lastFingerCountRef.current = newCount;
             break;
           }
-          if (newCount >= 1 && newCount <= 5 && newCount !== prevCount) {
+          if (newCount >= 1 && newCount <= 4 && newCount !== prevCount) {
             fingerHoldStartRef.current = { x: stageX, y: stageY };
             setFingerHoldProgress(0);
 
@@ -586,8 +583,8 @@ export const Stage: React.FC<StageProps> = ({
               const startPos = fingerHoldStartRef.current;
               if (!startPos) return;
 
-              if (newCount === 5) {
-                // 5 fingers → switch camera
+              if (newCount === 4) {
+                // 4 fingers → switch camera
                 switchCamera();
               } else if (newCount === 1) {
                 // 1 finger → if near a text element, edit it; otherwise spawn new text

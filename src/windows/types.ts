@@ -1,4 +1,4 @@
-export type WindowType = 'text' | 'image' | 'shape' | 'browser' | 'counter';
+export type WindowType = 'text' | 'image' | 'shape' | 'browser';
 
 export interface WindowPosition {
   x: number;
@@ -28,8 +28,7 @@ export type WindowDataPayload =
   | TextData
   | ImageData
   | ShapeData
-  | BrowserData
-  | CounterData;
+  | BrowserData;
 
 export interface TextData {
   kind: 'text';
@@ -56,10 +55,4 @@ export interface ShapeData {
 export interface BrowserData {
   kind: 'browser';
   url: string;
-}
-
-export interface CounterData {
-  kind: 'counter';
-  value: number;
-  label: string;
 }

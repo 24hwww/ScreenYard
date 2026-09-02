@@ -6,7 +6,6 @@ import {
   ImageData,
   ShapeData,
   BrowserData,
-  CounterData,
 } from './types';
 
 let nextZIndex = 1;
@@ -59,8 +58,6 @@ function getWindowDefaults(type: WindowType): WindowDataPayload {
       } as ShapeData;
     case 'browser':
       return { kind: 'browser', url: 'https://example.com' } as BrowserData;
-    case 'counter':
-      return { kind: 'counter', value: 0, label: 'Count' } as CounterData;
   }
 }
 
@@ -74,7 +71,5 @@ function getDefaultSize(type: WindowType): { width: number; height: number } {
       return { width: 150, height: 150 };
     case 'browser':
       return { width: 640, height: 480 };
-    case 'counter':
-      return { width: 160, height: 80 };
   }
 }
