@@ -127,3 +127,46 @@
 .vcam-instructions a:hover {
   text-decoration: underline;
 }
+
+/* ===== Floating Window (PiP) Controls ===== */
+.vcam-pip-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px;
+}
+
+.vcam-pip-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 8px;
+  background: rgba(168, 85, 247, 0.15);
+  color: #e9d5ff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.vcam-pip-btn:hover {
+  background: rgba(168, 85, 247, 0.3);
+  border-color: rgba(168, 85, 247, 0.6);
+}
+
+.vcam-pip-btn--active {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.vcam-pip-btn--active:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.vcam-pip-error {
+  font-size: 11px;
+  color: #fca5a5;
+  text-align: center;
+}

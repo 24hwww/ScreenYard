@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { usePictureInPicture } from '../hooks/usePictureInPicture';
 import './VirtualCamera.css';
 
 interface VirtualCameraOutputProps {
@@ -51,6 +52,9 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
 
   // Detect if running as extension (chrome.runtime available) or dev server
   const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
+
+  // Picture-in-Picture floating window
+  const pip = usePictureInPicture();
 
   // WebRTC peer connections (one per video call tab that requests the stream)
   const peerConnectionsRef = useRef<Map<number, RTCPeerConnection>>(new Map());
@@ -346,6 +350,50 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           <canvas ref={canvasRef} className="vcam-canvas" />
         </div>
 
+        {/* Floating window controls */}
+        {pip.isSupported && (
+          <div className="vcam-pip-controls">
+            {pip.isActive ? (
+              <button className="vcam-pip-btn vcam-pip-btn--active" onClick={pip.closePiP}>
+                🪟 Close floating window
+              </button>
+            ) : (
+              <button
+                className="vcam-pip-btn"
+                onClick={() => {
+                  // Move both the stage and the hidden VCam canvas into PiP.
+                  // The canvas needs to be in the same window as the stage
+                  // so requestAnimationFrame doesn't get throttled when
+                  // the main tab goes to the background.
+                  const stage = stageRef.current;
+                  const canvas = canvasRef.current;
+                  if (stage && canvas) {
+                    // Create a wrapper to hold both elements
+                    const wrapper = document.createElement('div');
+                    wrapper.style.width = '100%';
+                    wrapper.style.height = '100%';
+                    wrapper.style.position = 'relative';
+                    wrapper.appendChild(stage);
+                    // Canvas is hidden but needs to render
+                    canvas.style.position = 'absolute';
+                    canvas.style.top = '0';
+                    canvas.style.left = '0';
+                    canvas.style.width = '100%';
+                    canvas.style.height = '100%';
+                    canvas.style.opacity = '0'; // hidden but rendering
+                    canvas.style.pointerEvents = 'none';
+                    wrapper.appendChild(canvas);
+                    pip.openPiP(wrapper, 480, 270);
+                  }
+                }}
+              >
+                🪟 Open floating window
+              </button>
+            )}
+            {pip.error && <div className="vcam-pip-error">{pip.error}</div>}
+          </div>
+        )}
+
         <div className="vcam-info">
           <div className="vcam-info-row">
             <span className="vcam-info-label">Mode:</span>
@@ -374,12 +422,14 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
             <div className="vcam-instructions-title">📋 Sin OBS — directo en Meet:</div>
             <ol>
               <li>Abre ScreenYard (esta pestaña) y activa VCam</li>
+              <li>Click <strong>🪟 Open floating window</strong> para despegar el stage</li>
               <li>Abre <strong>Google Meet</strong> (o Zoom/Teams) en otra pestaña</li>
               <li>Meet → Settings → Video → Camera</li>
               <li>Selecciona <strong>ScreenYard Virtual Camera</strong></li>
               <li>¡Listo! Tu stage con gestos aparece como cámara</li>
             </ol>
             <div style={{ marginTop: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+              La ventana flotante mantiene el stream activo aunque cambies de pestaña.
               La extensión intercepta getUserMedia y envía el stream vía WebRTC loopback.
               Sin OBS, sin drivers, sin permisos de admin.
             </div>
