@@ -111,7 +111,7 @@ export class HandTracker {
   /** Minimum confidence to accept a hand detection (0-1).
    * Uses handedness score from MediaPipe, not wrist visibility
    * (which is always 0 for hand landmarks). */
-  private minConfidence = 0.3;
+  private minConfidence = 0.5;
 
   async initialize(
     videoElement: HTMLVideoElement,
@@ -147,9 +147,9 @@ export class HandTracker {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        minHandDetectionConfidence: 0.7,
+        minHandPresenceConfidence: 0.7,
+        minTrackingConfidence: 0.6,
       });
     } catch (gpuErr) {
       console.warn('GPU delegate failed, falling back to CPU:', gpuErr);
@@ -160,9 +160,9 @@ export class HandTracker {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        minHandDetectionConfidence: 0.7,
+        minHandPresenceConfidence: 0.7,
+        minTrackingConfidence: 0.6,
       });
     }
     this.initialized = true;
@@ -426,6 +426,20 @@ export class HandTracker {
           const thumbTip: GesturePoint = { x: thumbX, y: thumbY };
 
           const handSize = computeHandSize(landmarks3D);
+
+          // Sanity check: reject detections with implausible hand geometry.
+          // A real hand has wrist-to-middle-MCP distance > 0.05 in normalized
+          // coords. Face/body false positives produce tiny or huge values.
+          // Also check that fingertips are farther from wrist than PIP joints
+          // (a real hand has extended finger structure).
+          if (handSize < 0.05 || handSize > 0.5) continue;
+
+          // Verify basic hand structure: index tip should be farther from
+          // wrist than index MCP (fingers extend outward from palm)
+          const indexTipToWrist = dist2D(landmarks3D[INDEX_TIP], landmarks3D[WRIST]);
+          const indexMcpToWrist = dist2D(landmarks3D[INDEX_MCP], landmarks3D[WRIST]);
+          if (indexTipToWrist < indexMcpToWrist * 0.8) continue;
+
           const orientation = this.detectOrientation(landmarks3D);
           const pose = this.detectPose(landmarks3D, handSize);
           const fingerCount = this.countFingers(landmarks3D, handSize);
