@@ -1,4 +1,4 @@
-export type WindowType = 'text' | 'image' | 'shape' | 'browser';
+export type WindowType = 'text' | 'image' | 'shape' | 'browser' | 'tab';
 
 export interface WindowPosition {
   x: number;
@@ -28,7 +28,8 @@ export type WindowDataPayload =
   | TextData
   | ImageData
   | ShapeData
-  | BrowserData;
+  | BrowserData
+  | TabData;
 
 export interface TextData {
   kind: 'text';
@@ -55,4 +56,18 @@ export interface ShapeData {
 export interface BrowserData {
   kind: 'browser';
   url: string;
+}
+
+export interface TabData {
+  kind: 'tab';
+  /** Chrome tab ID being captured */
+  tabId: number;
+  /** Tab title for display */
+  title: string;
+  /** Tab URL for display */
+  url: string;
+  /** Tab favicon URL */
+  favIconUrl?: string;
+  /** MediaStream from chrome.tabCapture (stored externally, not in state) */
+  streamId?: string;
 }

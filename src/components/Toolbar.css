@@ -109,3 +109,115 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.4); }
   50% { box-shadow: 0 0 0 4px rgba(20, 184, 166, 0); }
 }
+
+/* ===== Tab Picker ===== */
+.tab-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.tab-picker {
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  width: 480px;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.tab-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 15px;
+  font-weight: 600;
+  color: #eee;
+}
+
+.tab-picker-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.tab-picker-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.tab-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.tab-picker-loading,
+.tab-picker-empty {
+  padding: 24px;
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+}
+
+.tab-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #ddd;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.tab-picker-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tab-picker-favicon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 3px;
+}
+
+.tab-picker-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.tab-picker-url {
+  color: #888;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.toolbar-btn--tab {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #c084fc;
+}
+
+.toolbar-btn--tab:hover {
+  background: rgba(168, 85, 247, 0.25);
+}

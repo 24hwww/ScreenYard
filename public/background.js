@@ -24,6 +24,9 @@ let screenyardTabId = null;
 // Track which caller tab is waiting for an offer response
 let pendingCallerTabId = null;
 
+// Track active tab capture streams
+const tabCaptureStreams = new Map(); // tabId → streamId
+
 // Open ScreenYard when extension icon is clicked
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('index.html') }, (tab) => {
@@ -74,6 +77,112 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ─── From ScreenYard tab: register as the stream source ───
   if (message.type === 'screenyard-register') {
     screenyardTabId = sender.tab?.id || null;
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // ─── List open tabs for tab embedding ───
+  if (message.type === 'screenyard-list-tabs') {
+    chrome.tabs.query({}, (tabs) => {
+      const filtered = tabs
+        .filter((t) => t.id !== screenyardTabId && t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('brave://') && !t.url.startsWith('chrome-extension://'))
+        .map((t) => ({
+          id: t.id,
+          title: t.title || 'Untitled',
+          url: t.url,
+          favIconUrl: t.favIconUrl || '',
+        }));
+      sendResponse({ tabs: filtered });
+    });
+    return true; // async response
+  }
+
+  // ─── Capture a tab's video/audio as a MediaStream ───
+  if (message.type === 'screenyard-capture-tab') {
+    const tabId = message.tabId;
+    console.log('[ScreenYard BG] Capturing tab', tabId);
+
+    // chrome.tabCapture.capture must be called from background
+    // It captures the specified tab and returns a stream via callback
+    try {
+      chrome.tabCapture.capture(tabId, {
+        audio: true,
+        video: true,
+        videoConstraints: {
+          mandatory: {
+            minWidth: 640,
+            maxWidth: 1920,
+            minHeight: 360,
+            maxHeight: 1080,
+          },
+        },
+      }, (stream) => {
+        if (chrome.runtime.lastError || !stream) {
+          const err = chrome.runtime.lastError?.message || 'Capture failed';
+          console.error('[ScreenYard BG] Tab capture failed:', err);
+          sendResponse({ error: err });
+          return;
+        }
+
+        // Store the stream globally so the ScreenYard tab can access it
+        // We need to pass the stream to the ScreenYard tab somehow.
+        // Since streams can't be sent via chrome.runtime.sendMessage,
+        // we send a message to the ScreenYard tab with the tabId,
+        // and the ScreenYard tab will use the stream from the global registry.
+        // But streams aren't transferable across tabs...
+
+        // Alternative: we can't directly pass a MediaStream across tabs.
+        // Instead, we'll use the fact that tabCapture creates a stream
+        // that's accessible in the background. We'll need to send it
+        // to the ScreenYard tab via a different mechanism.
+        //
+        // For Manifest V3, the cleanest way is to use chrome.tabCapture
+        // from the ScreenYard tab itself (offscreen document or direct).
+        // But tabCapture from a content script/page is restricted.
+        //
+        // Workaround: store the stream in the background and use
+        // chrome.runtime.sendMessage to notify the ScreenYard tab.
+        // The ScreenYard tab can then use getDisplayMedia or we
+        // can use an offscreen document.
+        //
+        // For now, let's try sending the stream via a MessageChannel
+        // or just notify and let the ScreenYard tab handle it.
+
+        // Actually, in MV3 we should use offscreen documents for this.
+        // But a simpler approach: use chrome.tabCapture.getMediaStreamId
+        // which returns an ID that can be used with getUserMedia in
+        // the ScreenYard tab.
+
+        // Let's stop the stream for now and use getMediaStreamId instead
+        stream.getTracks().forEach((t) => t.stop());
+
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ error: chrome.runtime.lastError.message });
+            return;
+          }
+          tabCaptureStreams.set(tabId, streamId);
+          // Send the streamId to the ScreenYard tab
+          if (screenyardTabId) {
+            chrome.tabs.sendMessage(screenyardTabId, {
+              type: 'tab-capture-stream-id',
+              tabId: tabId,
+              streamId: streamId,
+            }).catch(() => {});
+          }
+          sendResponse({ streamId: streamId, tabId: tabId });
+        });
+      });
+    } catch (e) {
+      sendResponse({ error: e.message });
+    }
+    return true; // async response
+  }
+
+  // ─── Stop capturing a tab ───
+  if (message.type === 'screenyard-stop-tab-capture') {
+    const tabId = message.tabId;
+    tabCaptureStreams.delete(tabId);
     sendResponse({ ok: true });
     return false;
   }

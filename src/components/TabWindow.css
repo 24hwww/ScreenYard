@@ -1,0 +1,72 @@
+/* ===== Tab Window ===== */
+.tab-window {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a2e;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tab-window-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.4);
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.tab-window-favicon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.tab-window-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-window-content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+
+.tab-window-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.tab-window-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 13px;
+  font-family: sans-serif;
+}
+
+.tab-window-status--error {
+  color: #f66;
+  padding: 12px;
+  text-align: center;
+}
+
+/* ===== Paper Crumple Effect (GSAP target) ===== */
+.window-inner {
+  transform-origin: center center;
+  will-change: transform, box-shadow;
+}

@@ -1,9 +1,11 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { WindowData, TextData, ImageData, ShapeData } from '../windows/types';
+import gsap from 'gsap';
+import { WindowData, TextData, ImageData, ShapeData, TabData } from '../windows/types';
 import { TextWindow } from './TextWindow';
 import { ImageWindow } from './ImageWindow';
 import { ShapeWindow } from './ShapeWindow';
+import { TabWindow } from './TabWindow';
 
 interface WindowWrapperProps {
   window: WindowData;
@@ -21,6 +23,8 @@ interface WindowWrapperProps {
   onDragEnd?: (id: string, x: number, y: number) => void;
   /** Swipe-to-delete progress (0-1) for visual feedback */
   swipeProgress?: number;
+  /** Whether this element is currently being pinched (grabbed by gesture) */
+  isPinched?: boolean;
 }
 
 export const WindowWrapper: React.FC<WindowWrapperProps> = ({
@@ -35,13 +39,61 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
   onDragStart,
   onDragEnd,
   swipeProgress = 0,
+  isPinched = false,
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, winX: 0, winY: 0 });
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
+  const wasPinchedRef = useRef(false);
+
+  // ─── GSAP paper crumple effect on pinch ───
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+
+    if (isPinched && !wasPinchedRef.current) {
+      // Pinch started → dramatic crumple effect
+      wasPinchedRef.current = true;
+      gsap.killTweensOf(inner);
+      gsap.to(inner, {
+        scale: 0.85,
+        rotation: 3,
+        skewX: 4,
+        skewY: -2,
+        borderRadius: '12px',
+        duration: 0.25,
+        ease: 'power3.out',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.6), inset 0 0 30px rgba(0,0,0,0.2)',
+      });
+      // Wobble for paper-like feel
+      gsap.to(inner, {
+        rotation: -2,
+        duration: 0.15,
+        ease: 'power2.inOut',
+        yoyo: true,
+        repeat: 3,
+        delay: 0.25,
+      });
+    } else if (!isPinched && wasPinchedRef.current) {
+      // Pinch released → spring back with elastic bounce
+      wasPinchedRef.current = false;
+      gsap.killTweensOf(inner);
+      gsap.to(inner, {
+        scale: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        borderRadius: '0px',
+        duration: 0.6,
+        ease: 'elastic.out(1, 0.4)',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
+      });
+    }
+  }, [isPinched]);
 
   // Mouse drag
   const handleMouseDown = useCallback(
@@ -133,6 +185,8 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
         return <ImageWindow data={win.data as ImageData} windowId={win.id} />;
       case 'shape':
         return <ShapeWindow data={win.data as ShapeData} windowId={win.id} />;
+      case 'tab':
+        return <TabWindow data={win.data as TabData} windowId={win.id} />;
       default:
         return <div className="window-fallback">{win.type}</div>;
     }
@@ -198,7 +252,9 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {renderContent()}
+      <div ref={innerRef} className="window-inner" style={{ width: '100%', height: '100%', position: 'relative' }}>
+        {renderContent()}
+      </div>
 
       {win.selected && !win.locked && (
         <motion.div

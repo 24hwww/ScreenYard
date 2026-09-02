@@ -582,10 +582,9 @@ export const Stage: React.FC<StageProps> = ({
           // counts. Block spawning when orientation is side and pose is
           // pinch for ANY hand (not just the primary).
           const currentState = gestureRecognizer.getState();
-          const anyHandPinchSide = currentState.hands.some(
-            (h) => h.orientation === 'side' && h.pose === 'pinch',
-          );
-          if (anyHandPinchSide) {
+          const primarySidePinch = currentState.orientation === 'side' && currentState.pose === 'pinch';
+          const secondarySidePinch = currentState.secondHand?.orientation === 'side' && currentState.secondHand?.pose === 'pinch';
+          if (primarySidePinch || secondarySidePinch) {
             if (fingerHoldTimerRef.current !== null) {
               clearTimeout(fingerHoldTimerRef.current);
               fingerHoldTimerRef.current = null;
@@ -711,6 +710,7 @@ export const Stage: React.FC<StageProps> = ({
               onDragStart={handleMouseDragStart}
               onDragEnd={handleMouseDragEnd}
               swipeProgress={swipingWindowId === win.id ? swipeProgress : 0}
+              isPinched={draggingWindowId === win.id && dragSource === 'gesture'}
             />
           ))}
         </AnimatePresence>

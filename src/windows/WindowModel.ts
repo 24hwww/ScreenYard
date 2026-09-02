@@ -6,6 +6,7 @@ import {
   ImageData,
   ShapeData,
   BrowserData,
+  TabData,
 } from './types';
 
 let nextZIndex = 1;
@@ -58,6 +59,13 @@ function getWindowDefaults(type: WindowType): WindowDataPayload {
       } as ShapeData;
     case 'browser':
       return { kind: 'browser', url: 'https://example.com' } as BrowserData;
+    case 'tab':
+      return {
+        kind: 'tab',
+        tabId: -1,
+        title: 'Tab',
+        url: '',
+      } as TabData;
   }
 }
 
@@ -71,5 +79,7 @@ function getDefaultSize(type: WindowType): { width: number; height: number } {
       return { width: 150, height: 150 };
     case 'browser':
       return { width: 640, height: 480 };
+    case 'tab':
+      return { width: 480, height: 320 };
   }
 }
