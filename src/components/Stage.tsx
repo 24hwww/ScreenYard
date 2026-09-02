@@ -562,9 +562,30 @@ export const Stage: React.FC<StageProps> = ({
           // Only process finger-count from the primary hand (handIndex 0)
           if (handIdx !== 0) break;
 
-          // Pose is the authority: if the hand is making a fist, ignore
-          // finger count entirely (fist can misreport 1 finger due to noise)
-          if (event.pose === 'fist') {
+          // Pose is the authority: if the hand is making a fist or pinch,
+          // ignore finger count entirely.
+          // - fist: can misreport 1 finger due to noise
+          // - pinch: thumb+index together reads as 1 finger, but it's a
+          //   grab gesture, not a spawn gesture
+          if (event.pose === 'fist' || event.pose === 'pinch') {
+            if (fingerHoldTimerRef.current !== null) {
+              clearTimeout(fingerHoldTimerRef.current);
+              fingerHoldTimerRef.current = null;
+            }
+            setFingerHoldProgress(0);
+            fingerHoldStartRef.current = null;
+            lastFingerCountRef.current = 0;
+            break;
+          }
+
+          // Orientation 'side' with pinch pose can produce false finger
+          // counts. Block spawning when orientation is side and pose is
+          // pinch for ANY hand (not just the primary).
+          const currentState = gestureRecognizer.getState();
+          const anyHandPinchSide = currentState.hands.some(
+            (h) => h.orientation === 'side' && h.pose === 'pinch',
+          );
+          if (anyHandPinchSide) {
             if (fingerHoldTimerRef.current !== null) {
               clearTimeout(fingerHoldTimerRef.current);
               fingerHoldTimerRef.current = null;
