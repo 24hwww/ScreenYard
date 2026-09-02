@@ -5,8 +5,9 @@
 Extensión de navegador (Chrome/Brave, Manifest V3) que abre una pestaña con un
 "escenario" donde se superponen ventanas (texto, imágenes, formas) sobre un fondo
 de webcam. El escenario se controla con gestos de mano mediante MediaPipe Tasks
-Vision. Está pensada para compartir la pestaña en videollamadas (StreamYard,
-Zoom, Meet, etc.).
+Vision. La extensión **inyecta una virtual camera** en las páginas de videollamadas
+(Meet, Zoom, Teams, Discord, etc.) interceptando `navigator.mediaDevices`, por lo
+que ScreenYard aparece como una cámara más — sin OBS, sin drivers nativos.
 
 ## Stack
 
@@ -14,6 +15,9 @@ Zoom, Meet, etc.).
 - **Vite 6** como bundler
 - **Vitest 2** para tests (entorno jsdom)
 - **MediaPipe Tasks Vision** (`@mediapipe/tasks-vision`) para tracking de manos
+- **framer-motion** para animaciones de elementos (spawn, select, drag, edit, delete)
+- **@zxing/library** para escaneo de códigos de barras/QR (lazy-loaded)
+- **@types/chrome** para tipos de la extension API
 - **sharp** para generar iconos PNG desde SVG (dev dependency)
 
 ## Comandos
@@ -45,21 +49,25 @@ Los tres deben pasar sin errores.
 src/
 ├── main.tsx                # Entry point de React
 ├── app/
-│   ├── App.tsx             # Componente raíz: orquesta Toolbar + Stage
+│   ├── App.tsx             # Componente raíz: orquesta Toolbar + Stage + VCam
 │   └── App.css
 ├── components/
-│   ├── Stage.tsx           # Escenario: webcam + ventanas + gestos + trash + emojis
+│   ├── Stage.tsx           # Escenario: webcam + ventanas + gestos + trash + emojis + VCam
 │   ├── Stage.css
-│   ├── Toolbar.tsx         # Barra superior: añadir ventanas, modo presentación, debug
+│   ├── Toolbar.tsx         # Barra superior: add, scan, vcam, clear, presentación, debug
 │   ├── Toolbar.css
-│   ├── WindowWrapper.tsx   # Wrapper draggable/resizable para cada ventana
+│   ├── WindowWrapper.tsx   # Wrapper draggable/resizable con framer-motion (3D tilt, anims)
 │   ├── TextWindow.tsx      # Ventana de texto editable (doble-clic o gesto 1 dedo)
 │   ├── ImageWindow.tsx     # Ventana de imagen (URL)
 │   ├── ShapeWindow.tsx     # Ventana de forma (rect/circle/triangle)
 │   ├── VirtualCursor.tsx   # Cursor virtual que sigue al dedo índice
 │   ├── TrashZone.tsx       # Zona de eliminación en la parte inferior
 │   ├── EmojiBurst.tsx      # Emojis animados (reacción a thumb_up)
-│   └── DebugPanel.tsx      # Panel de debug de gestos (toggleable)
+│   ├── DebugPanel.tsx      # Panel de debug de gestos (toggleable)
+│   ├── BarcodeScanner.tsx  # Escáner de códigos de barras/QR (BarcodeDetector + ZXing fallback)
+│   ├── BarcodeScanner.css
+│   ├── VirtualCamera.tsx   # Modo Virtual Camera: composite canvas + WebRTC sender
+│   └── VirtualCamera.css
 ├── gestures/
 │   ├── types.ts            # Tipos: GestureEvent, GestureState, HandOrientation...
 │   ├── HandTracker.ts      # Wrapper de MediaPipe HandLandmarker (hasta 2 manos)
@@ -75,27 +83,100 @@ src/
     └── setup.ts            # Setup de Vitest (jest-dom matchers)
 
 public/
-├── manifest.json           # Manifest V3 de la extensión
-├── background.js           # Service worker: abre pestaña al clicar el icono
+├── manifest.json           # Manifest V3: content_scripts + permissions + host_permissions
+├── background.js           # Service worker: routing de mensajes entre tabs (ScreenYard ↔ Meet)
+├── content_script.js       # Intercepta enumerateDevices + getUserMedia en sites de videollamadas
 └── icons/                  # Iconos 16/48/128px (generados por scripts/generate-icons.mjs)
 
 scripts/
-├── build-extension.mjs     # Build + copia manifest/background/icons a dist/
+├── build-extension.mjs     # Build + copia manifest/background/content_script/icons a dist/
 └── generate-icons.mjs      # Genera PNGs desde SVG inline usando sharp
 ```
 
-## Flujo de datos
+## Virtual Camera — arquitectura
 
-1. **Estado de ventanas**: `WindowManagerState` (`{ windows: WindowData[], selectedId }`)
-   vive en `App.tsx` via `useState`. Todas las mutaciones pasan por reducers puros
-   en `WindowManager.ts` (inmutables, testeables).
+ScreenYard aparece como "ScreenYard Virtual Camera" en Google Meet, Zoom, Teams,
+Discord, Webex, y cualquier WebRTC video call — sin OBS, sin drivers, sin permisos
+de admin.
 
-2. **Gestos**: `HandTracker` procesa frames de webcam con MediaPipe →
-   `GestureRecognizer` emite `GestureEvent`s (pinch-start, pointer-move, finger-count,
-   gesture-detected...) → `Stage.tsx` escucha y traduce a acciones sobre ventanas.
+### Flujo
 
-3. **Drag**: mouse (vía `WindowWrapper`) o gesto (pinch). Ambos actualizan posición
-   via `moveWindow`. La `TrashZone` aparece durante el drag; soltar ahí elimina.
+```
+1. ScreenYard tab activa VCam → canvas.captureStream(30)
+2. ScreenYard registra con background.js (screenyard-register + stream-ready)
+3. Usuario abre Meet → content_script.js se inyecta (document_start, MAIN world)
+4. Meet llama enumerateDevices() → ve "ScreenYard Virtual Camera"
+5. Usuario selecciona ScreenYard en Settings → Video → Camera
+6. Meet llama getUserMedia({deviceId: 'screenyard-virtual-camera'})
+7. Content script intercepta → pide stream via background
+8. Background reenvía a ScreenYard tab (screenyard-start-webrtc)
+9. ScreenYard crea RTCPeerConnection, añade canvas tracks, envía offer
+10. Background relaya offer al content script
+11. Content script crea answer → recibe track via WebRTC loopback
+12. getUserMedia devuelve el MediaStream → Meet muestra el stage como webcam
+```
+
+### Componentes
+
+- **`content_script.js`**: inyectado en `meet.google.com`, `*.zoom.us`,
+  `teams.microsoft.com`, `teams.live.com`, `*.webex.com`, `*.discord.com`,
+  `*.slack.com`, `*.whereby.com`, `*.jitsi.org`, `*.8x8.vc`. Intercepta
+  `navigator.mediaDevices.enumerateDevices()` y `getUserMedia()`.
+- **`background.js`**: service worker que enruta mensajes entre tabs. Mantiene
+  `screenyardTabId`, relaya offers/answers/ICE candidates.
+- **`VirtualCamera.tsx`**: composita cámara + elementos en canvas 1280×720 a 30fps,
+  crea RTCPeerConnection con canvas tracks, envía offer al content script.
+
+### Canvas composition
+
+El canvas compone:
+- Cámara de fondo (cover-fit, espejado)
+- Text elements (con fuente, color, word-wrap)
+- Shape elements (rect, circle, con stroke)
+- Image elements (placeholder)
+- Bordes de selección azules
+
+## Mapeo de gestos
+
+| Dedos (hold 2s) | Acción |
+|---|---|
+| 1 | Text (o editar texto cercano) |
+| 2 | Image |
+| 3 | Shape |
+| 4 | Switch camera |
+| 5 | (sin acción) |
+
+| Gesto | Acción |
+|---|---|
+| Pinch (thumb + index) | Agarrar y arrastrar ventana |
+| Pinch + swipe horizontal | Eliminar ventana (swipe-to-delete) |
+| Fist (sobre elemento seleccionado) | Eliminar elemento |
+| Thumb up | Spawn emoji reactions |
+
+**Pose es la autoridad**: si la pose es `fist`, los eventos `finger-count` se
+ignoran completamente (evita falsos positivos de 1 dedo durante un puño cerrado).
+
+**No spawn cuando hay selección**: si un elemento está seleccionado, los gestos
+1-3 no crean nuevos elementos (evita conflictos). 4 (switch camera) sí funciona.
+
+## Animaciones (framer-motion)
+
+`WindowWrapper` usa `motion.div` con:
+
+| Estado | Animación |
+|---|---|
+| Spawn | Scale 0.5→1 + rotateY -90°→0 (3D flip in) |
+| Select | Scale 1.03 + blue glow + selection border fade-in |
+| Drag | 3D tilt (rotateX -8°) + elevated shadow |
+| Hover | Scale 1.02 + shadow |
+| Edit | Brightness pulse (1.5s loop) |
+| Swipe delete | Red glow + hue rotate + scale down |
+| Delete/exit | Scale 0.3 + rotateX 90° + fade out (3D flip out) |
+| Controls | Spring slide-in from top |
+
+Setup 3D: `.stage-foreground` con `perspective: 1000px`, `.window-wrapper` con
+`transform-style: preserve-3d`. `AnimatePresence` envuelve la lista de ventanas
+para que las animaciones de exit se reproduzcan antes de remover del DOM.
 
 ## Tipos de ventana
 
@@ -105,7 +186,6 @@ scripts/
 | `image` | `ImageWindow` | Implementado — muestra imagen desde URL |
 | `shape` | `ShapeWindow` | Implementado — rect/circle/triangle |
 | `browser` | — | **Definido en types pero NO implementado** (fallback) |
-| `counter` | — | **Definido en types pero NO implementado** (fallback) |
 
 ## Patrones y convenciones
 
@@ -121,6 +201,7 @@ scripts/
 - **IDs únicos**: `${type}-${Date.now()}-${random}` en `WindowModel.createWindow`.
 - **zIndex incremental**: `nextZIndex` global en `WindowModel.ts`. `bringToFront`
   calcula `maxZ + 1`.
+- **Lazy loading**: ZXing se carga con dynamic import solo cuando se abre el escáner.
 
 ## Testing
 
@@ -129,7 +210,7 @@ scripts/
 - 40 tests actuales cubren: WindowManager (14), WindowModel (5),
   GestureRecognizer (8), GestureSmoother (8), coordinateConversion (5).
 - **Sin cobertura**: componentes de UI (Stage, WindowWrapper, TextWindow...),
-  HandTracker (requiere MediaPipe + cámara).
+  HandTracker (requiere MediaPipe + cámara), VirtualCamera (requiere WebRTC).
 
 ## Pipeline de reconocimiento de gestos
 
@@ -163,6 +244,8 @@ getUserMedia → <video> oculto → MediaPipe HandLandmarker
   (30fps budget), salta frames para mantener el pipeline en tiempo real.
 - **MediaPipe local (offline)**: WASM y modelo se sirven desde `public/mediapipe/`
   en lugar de CDN. La extensión funciona sin conexión a internet.
+- **Pose como autoridad**: si la pose es `fist`, finger-count se ignora. Evita
+  falsos positivos cuando MediaPipe reporta 1 dedo durante un puño cerrado.
 
 Ver `docs/gesture-precision-audit.md` para el análisis completo.
 
@@ -173,14 +256,18 @@ Ver `docs/gesture-precision-audit.md` para el análisis completo.
   a `dist/mediapipe/` automáticamente.
 - **Cámara obligatoria**: `Stage` pide `getUserMedia` al montar. Sin permiso de
   cámara, muestra error pero la app no es funcional.
-- **Manifest V3**: `public/manifest.json` solo pide permiso `activeTab`. El
-  service worker (`background.js`) abre `index.html` al clicar el icono.
+- **Manifest V3**: `public/manifest.json` pide `activeTab`, `tabs`, `scripting`,
+  `storage` + `host_permissions: <all_urls>`. El content script se inyecta en
+  sites de videollamadas (Meet, Zoom, Teams, etc.) en `document_start` + `world: MAIN`.
 - **Build de extensión**: `npm run build:ext` genera `dist/` listo para cargar
-  como extensión desempaquetada en `chrome://extensions/`.
+  como extensión desempaquetada en `chrome://extensions/`. Copia manifest,
+  background.js, content_script.js, icons, y mediapipe.
+- **Virtual Camera**: el modo VCam compone el stage en un canvas 1280×720 a 30fps
+  y lo envía vía WebRTC loopback al content script de la videollamada. Sin OBS.
 
 ## Bugs conocidos / limitaciones
 
-- Tipos `browser` y `counter` definidos pero sin componente UI (fallback).
+- Tipo `browser` definido pero sin componente UI (fallback).
 - `HandTracker`, `GestureRecognizer` y smoothers se instancian a nivel de módulo
   en `Stage.tsx` (fuera del componente). Si `Stage` se desmonta/remonta, las
   instancias persisten y los smoothers no se reinician.
@@ -188,3 +275,7 @@ Ver `docs/gesture-precision-audit.md` para el análisis completo.
   `state` (frecuente durante drag). Podría optimizarse con un `ref` para `state`.
 - `nextZIndex` es mutable global en `WindowModel.ts` — acoplado al ciclo de vida
   del módulo.
+- Virtual Camera: los elementos `image` se renderizan como placeholder en el
+  canvas composite (no se dibuja la imagen real).
+- Virtual Camera: el content script en `world: MAIN` puede no tener acceso a
+  `chrome.runtime` en algunos navegadores. Hay fallback via CustomEvent.

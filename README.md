@@ -1,31 +1,41 @@
 # ScreenYard
 
-ScreenYard is a browser extension that creates a tab where you can add other
-micro windows, with resources, counters, cameras, or texts, and share the tab
-in StreamYard, Zoom, Meet, or other video calling or video conferencing tools.
+ScreenYard is a Chrome/Brave extension that creates an interactive presentation
+stage in a browser tab — a live webcam background with movable overlays (text,
+images, shapes) that you can drag, resize, lock, and delete with **hand gestures**
+tracked locally via MediaPipe.
 
-The tab acts as an interactive presentation stage: a live webcam background with
-movable overlays (text, images, shapes) that you can drag, resize, lock, and
-delete — either with the mouse or with **hand gestures** tracked locally via
-MediaPipe.
+ScreenYard also works as a **virtual camera**: it appears as "ScreenYard Virtual
+Camera" in Google Meet, Zoom, Teams, Discord, Webex, and any WebRTC video call —
+**without OBS, without drivers, without admin permissions**. The extension
+intercepts `navigator.mediaDevices` on video call sites and pipes the composited
+stage via WebRTC loopback.
 
 ## Features
 
+- **Virtual camera** — appears as a camera in Meet/Zoom/Teams/Discord. No OBS needed.
 - **Live webcam background** — mirror view, fills the whole stage.
 - **Movable overlays** — text, images, and shapes. Drag, resize, lock, and delete.
-- **Text editing** — double-click any text window (or use a one-finger gesture)
-  to edit its content inline.
+- **3D animations** — elements spawn with a 3D flip, tilt when dragged, and flip
+  out when deleted (powered by framer-motion).
 - **Hand gesture control** (via MediaPipe Tasks Vision, processed locally):
   - **Pinch** to grab and drag windows.
-  - **One finger** to open the nearest text window for editing.
+  - **Pinch + horizontal swipe** to delete a window (swipe-to-delete).
+  - **Fist** over a selected element to delete it.
+  - **1 finger** (hold 2s) to spawn a text window or edit the nearest one.
+  - **2 fingers** (hold 2s) to spawn an image window.
+  - **3 fingers** (hold 2s) to spawn a shape window.
+  - **4 fingers** (hold 2s) to switch camera.
   - **Thumb up** to spawn emoji reactions.
   - Up to **two hands** tracked simultaneously with virtual cursors.
+- **Barcode/QR scanner** — scan codes with the camera, auto-copy to clipboard.
+  Uses native `BarcodeDetector` API with `@zxing/library` fallback.
 - **Trash zone** — drag any window to the bottom strip to delete it.
 - **Presentation mode** — fullscreen stage, exit with `Escape`.
 - **Debug panel** — toggleable overlay showing hand state, pinch, finger count,
   orientation, pose, and recognized gestures.
 - **Chrome extension (Manifest V3)** — click the toolbar icon to open the stage
-  in a new tab, ready to share in any video call.
+  in a new tab.
 
 ## Tech stack
 
@@ -33,6 +43,9 @@ MediaPipe.
 - Vite 6 (bundler)
 - Vitest 2 (testing, jsdom)
 - MediaPipe Tasks Vision (hand landmark detection)
+- framer-motion (3D element animations)
+- @zxing/library (barcode/QR scanning, lazy-loaded)
+- @types/chrome (extension API types)
 - sharp (icon generation, dev only)
 
 ## Getting started
@@ -41,6 +54,7 @@ MediaPipe.
 
 - Node.js 18+ (tested on Node 26)
 - npm 9+
+- Chrome or Brave browser
 
 ### Install
 
@@ -63,7 +77,7 @@ npm run build:ext
 ```
 
 This runs Vite build, generates icons, and copies `manifest.json`,
-`background.js`, and icons into `dist/`.
+`background.js`, `content_script.js`, icons, and MediaPipe WASM into `dist/`.
 
 ### Load the extension in Chrome/Brave
 
@@ -73,7 +87,33 @@ This runs Vite build, generates icons, and copies `manifest.json`,
 4. Click **Load unpacked**.
 5. Select the `dist/` folder.
 6. Click the ScreenYard toolbar icon to open the stage tab.
-7. In your video call tool, share this tab.
+
+## Using the virtual camera in Google Meet
+
+1. Open the ScreenYard tab (via the extension icon).
+2. Grant camera permission.
+3. Click the **VCam** button (teal) in the toolbar to enable virtual camera mode.
+4. Open **Google Meet** in another tab (same browser).
+5. In Meet, go to **Settings → Video → Camera**.
+6. Select **ScreenYard Virtual Camera**.
+7. Your ScreenYard stage (webcam + overlays) now appears as your camera feed.
+
+The same steps work for Zoom, Teams, Discord, Webex, Whereby, Jitsi, and 8x8.
+
+### How it works (no OBS)
+
+The extension injects a content script into video call sites at `document_start`
+in the `MAIN` world (before the page's own scripts load). The content script
+intercepts `navigator.mediaDevices.enumerateDevices()` to add "ScreenYard Virtual
+Camera" to the device list, and `navigator.mediaDevices.getUserMedia()` to return
+the ScreenYard canvas stream (via WebRTC loopback) when that device is selected.
+
+```
+ScreenYard tab → canvas.captureStream(30) → RTCPeerConnection
+  → background.js (message routing)
+  → content_script.js (intercepts getUserMedia)
+  → Meet receives the stream as a "webcam"
+```
 
 ## Commands
 
@@ -99,21 +139,28 @@ This runs Vite build, generates icons, and copies `manifest.json`,
    selected.
 7. Use **hand gestures** in front of the camera:
    - Pinch (thumb + index) to grab and drag a window.
-   - Hold up one finger to edit the nearest text window.
+   - Pinch + horizontal swipe to delete (swipe-to-delete).
+   - Make a fist over a selected element to delete it.
+   - Hold up 1 finger for 2s to spawn/edit text.
+   - Hold up 2 fingers for 2s to spawn an image.
+   - Hold up 3 fingers for 2s to spawn a shape.
+   - Hold up 4 fingers for 2s to switch camera.
    - Thumb up to spawn emoji reactions.
 8. Drag a window to the **bottom trash strip** to delete it.
-9. Click **Present** for fullscreen presentation mode (exit with `Escape`).
+9. Click **VCam** to enable virtual camera mode for Meet/Zoom/Teams.
+10. Click **Present** for fullscreen presentation mode (exit with `Escape`).
 
 ## Project structure
 
 ```
 src/
 ├── app/            # Root App component
-├── components/     # Stage, Toolbar, windows, cursors, trash, emojis, debug
+├── components/     # Stage, Toolbar, windows, cursors, trash, emojis, debug,
+│                   # BarcodeScanner, VirtualCamera
 ├── gestures/       # HandTracker, GestureRecognizer, GestureSmoother, types
 ├── windows/        # WindowManager (reducers), WindowModel (factory), types
 └── test/           # Vitest setup
-public/             # Extension manifest, background worker, icons
+public/             # Extension manifest, background worker, content script, icons
 scripts/            # Build + icon generation scripts
 ```
 
@@ -126,15 +173,17 @@ guidance for contributing.
 npm test
 ```
 
-39 tests cover the window management reducers, window model factory, gesture
+40 tests cover the window management reducers, window model factory, gesture
 recognition, gesture smoothing, and coordinate conversion.
 
 ## Browser support
 
 - Chrome / Brave (Manifest V3 extension)
 - Requires camera access (`getUserMedia`)
-- Hand tracking requires WebGPU/WebGL and loads MediaPipe WASM from CDN
-  (internet connection required on first load)
+- Hand tracking requires WebGPU/WebGL and loads MediaPipe WASM from local
+  extension files (works offline after first build)
+- Virtual camera feature requires the extension to be loaded (content script
+  injection). The dev server alone does not inject into video call sites.
 
 ## License
 
