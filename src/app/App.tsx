@@ -16,6 +16,7 @@ export const App: React.FC = () => {
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [isDebugVisible, setIsDebugVisible] = useState(true);
   const [scannerVisible, setScannerVisible] = useState(false);
+  const [vcamActive, setVcamActive] = useState(false);
 
   const handleAddWindow = useCallback(
     (type: WindowType) => {
@@ -38,6 +39,10 @@ export const App: React.FC = () => {
 
   const handleScannerClose = useCallback(() => {
     setScannerVisible(false);
+  }, []);
+
+  const handleToggleVirtualCamera = useCallback(() => {
+    setVcamActive((prev) => !prev);
   }, []);
 
   const handleTogglePresentation = useCallback(() => {
@@ -65,6 +70,8 @@ export const App: React.FC = () => {
         onAddWindow={handleAddWindow}
         onClearAll={handleClearAll}
         onScan={handleScan}
+        onToggleVirtualCamera={handleToggleVirtualCamera}
+        isVirtualCameraActive={vcamActive}
         isPresentationMode={isPresentationMode}
         onTogglePresentation={handleTogglePresentation}
         isDebugVisible={isDebugVisible}
@@ -77,6 +84,7 @@ export const App: React.FC = () => {
         isDebugVisible={isDebugVisible}
         scannerVisible={scannerVisible}
         onScannerClose={handleScannerClose}
+        vcamActive={vcamActive}
       />
     </div>
   );

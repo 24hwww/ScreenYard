@@ -19,6 +19,7 @@ import { TrashZone } from './TrashZone';
 import { EmojiBurst, EmojiItem } from './EmojiBurst';
 import { DebugPanel } from './DebugPanel';
 import { BarcodeScanner } from './BarcodeScanner';
+import { VirtualCameraOutput } from './VirtualCamera';
 import { GestureState, GestureEvent } from '../gestures/types';
 import { HandTracker } from '../gestures/HandTracker';
 import { GestureRecognizer } from '../gestures/GestureRecognizer';
@@ -32,6 +33,7 @@ interface StageProps {
   isDebugVisible: boolean;
   scannerVisible: boolean;
   onScannerClose: () => void;
+  vcamActive: boolean;
 }
 
 const handTracker = new HandTracker();
@@ -88,6 +90,7 @@ export const Stage: React.FC<StageProps> = ({
   isDebugVisible,
   scannerVisible,
   onScannerClose,
+  vcamActive,
 }) => {
   const stageRef = useRef<HTMLDivElement>(null);
   const foregroundRef = useRef<HTMLDivElement>(null);
@@ -722,6 +725,14 @@ export const Stage: React.FC<StageProps> = ({
           {scanToast}
         </div>
       )}
+
+      {/* Virtual camera output */}
+      <VirtualCameraOutput
+        bgVideoRef={bgVideoRef}
+        stageRef={stageRef}
+        active={vcamActive}
+        windows={state.windows}
+      />
     </div>
   );
 };

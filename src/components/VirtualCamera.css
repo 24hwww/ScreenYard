@@ -1,0 +1,129 @@
+.vcam-overlay {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 500;
+  width: 340px;
+  background: rgba(15, 15, 20, 0.95);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #fff;
+  font-size: 13px;
+}
+
+.vcam-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.vcam-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vcam-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vcam-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(100, 100, 100, 0.3);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.vcam-status--active {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.vcam-preview {
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vcam-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.vcam-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.vcam-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.vcam-info-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.vcam-info-value {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.vcam-info-value code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #c084fc;
+}
+
+.vcam-instructions {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.vcam-instructions-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #c084fc;
+}
+
+.vcam-instructions ol {
+  margin: 0;
+  padding-left: 18px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.vcam-instructions li {
+  margin-bottom: 2px;
+}
+
+.vcam-instructions code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  background: rgba(168, 85, 247, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #c084fc;
+}
+
+.vcam-instructions a {
+  color: #60a5fa;
+  text-decoration: none;
+}
+
+.vcam-instructions a:hover {
+  text-decoration: underline;
+}

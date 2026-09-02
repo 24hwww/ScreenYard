@@ -1,0 +1,246 @@
+import React, { useRef, useEffect, useState } from 'react';
+import './VirtualCamera.css';
+
+interface VirtualCameraOutputProps {
+  /** Background video element (camera feed) */
+  bgVideoRef: React.RefObject<HTMLVideoElement | null>;
+  /** The stage element containing all windows to capture */
+  stageRef: React.RefObject<HTMLDivElement | null>;
+  /** Whether virtual camera mode is active */
+  active: boolean;
+  /** Window state to know what to composite */
+  windows: Array<{
+    id: string;
+    type: string;
+    position: { x: number; y: number };
+    size: { width: number; height: number };
+    selected: boolean;
+    data: any;
+  }>;
+}
+
+/**
+ * Virtual Camera Output mode.
+ *
+ * Composites the camera feed + all stage elements onto a single 1280x720 canvas
+ * at 30fps, then exposes it via canvas.captureStream().
+ *
+ * The resulting MediaStream can be:
+ * - Used in OBS as a Browser Source (most efficient)
+ * - Sent via WebRTC to a native virtual camera daemon
+ * - Recorded with MediaRecorder
+ *
+ * In Google Meet, you still need OBS Virtual Camera as the bridge:
+ * 1. Install OBS Studio
+ * 2. Add Browser Source → http://localhost:5173
+ * 3. Start Virtual Camera
+ * 4. In Meet: Settings → Video → OBS Virtual Camera
+ */
+export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
+  bgVideoRef,
+  stageRef,
+  active,
+  windows,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number | null>(null);
+  const [streamActive, setStreamActive] = useState(false);
+  const [fps, setFps] = useState(0);
+
+  const OUTPUT_WIDTH = 1280;
+  const OUTPUT_HEIGHT = 720;
+  const TARGET_FPS = 30;
+
+  useEffect(() => {
+    if (!active) {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      setStreamActive(false);
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = OUTPUT_WIDTH;
+    canvas.height = OUTPUT_HEIGHT;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Start captureStream
+    const stream = canvas.captureStream(TARGET_FPS);
+    setStreamActive(true);
+
+    // Expose stream globally for OBS / external access
+    (window as any).__screenYardVirtualCameraStream = stream;
+
+    let lastFpsTime = performance.now();
+    let frameCount = 0;
+
+    const render = () => {
+      const video = bgVideoRef.current;
+      const stage = stageRef.current;
+
+      // Clear
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+
+      // Draw camera background (cover fit)
+      if (video && video.readyState >= 2) {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (vw > 0 && vh > 0) {
+          const scale = Math.max(OUTPUT_WIDTH / vw, OUTPUT_HEIGHT / vh);
+          const dw = vw * scale;
+          const dh = vh * scale;
+          const dx = (OUTPUT_WIDTH - dw) / 2;
+          const dy = (OUTPUT_HEIGHT - dh) / 2;
+          // Mirror to match the stage display
+          ctx.save();
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, -dx - dw, dy, dw, dh);
+          ctx.restore();
+        }
+      }
+
+      // Draw elements on top
+      if (stage) {
+        const stageRect = stage.getBoundingClientRect();
+        const scaleX = OUTPUT_WIDTH / stageRect.width;
+        const scaleY = OUTPUT_HEIGHT / stageRect.height;
+
+        for (const win of windows) {
+          const x = win.position.x * scaleX;
+          const y = win.position.y * scaleY;
+          const w = win.size.width * scaleX;
+          const h = win.size.height * scaleY;
+
+          // Draw based on type
+          if (win.type === 'text') {
+            const data = win.data;
+            if (data?.content) {
+              ctx.fillStyle = data.color || '#ffffff';
+              const fontSize = (data.fontSize || 16) * scaleX;
+              ctx.font = `${fontSize}px ${data.fontFamily || 'sans-serif'}`;
+              ctx.textBaseline = 'top';
+              // Word wrap
+              const lines = data.content.split('\n');
+              let cy = y + 4;
+              for (const line of lines) {
+                ctx.fillText(line, x + 8, cy);
+                cy += fontSize * 1.3;
+              }
+            }
+          } else if (win.type === 'shape') {
+            const data = win.data;
+            ctx.fillStyle = data?.fill || '#3b82f6';
+            if (data?.shapeType === 'circle') {
+              ctx.beginPath();
+              ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+              ctx.fill();
+              if (data?.stroke) {
+                ctx.strokeStyle = data.stroke;
+                ctx.lineWidth = (data.strokeWidth || 2) * scaleX;
+                ctx.stroke();
+              }
+            } else {
+              ctx.fillRect(x, y, w, h);
+              if (data?.stroke) {
+                ctx.strokeStyle = data.stroke;
+                ctx.lineWidth = (data.strokeWidth || 2) * scaleX;
+                ctx.strokeRect(x, y, w, h);
+              }
+            }
+          } else if (win.type === 'image') {
+            // Images are complex to composite from DOM; draw a placeholder
+            ctx.fillStyle = 'rgba(100, 100, 100, 0.5)';
+            ctx.fillRect(x, y, w, h);
+            ctx.fillStyle = '#fff';
+            ctx.font = `${12 * scaleX}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('[image]', x + w / 2, y + h / 2);
+            ctx.textAlign = 'left';
+          }
+
+          // Selection border
+          if (win.selected) {
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2 * scaleX;
+            ctx.strokeRect(x, y, w, h);
+          }
+        }
+      }
+
+      // FPS counter
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        setFps(Math.round((frameCount * 1000) / (now - lastFpsTime)));
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+
+      rafRef.current = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      setStreamActive(false);
+      delete (window as any).__screenYardVirtualCameraStream;
+    };
+  }, [active, bgVideoRef, stageRef, windows]);
+
+  if (!active) return null;
+
+  return (
+    <div className="vcam-overlay">
+      <div className="vcam-panel">
+        <div className="vcam-header">
+          <span className="vcam-title">🎥 Virtual Camera Output</span>
+          <span className={`vcam-status ${streamActive ? 'vcam-status--active' : ''}`}>
+            {streamActive ? '● LIVE' : '○ Starting…'}
+          </span>
+        </div>
+
+        <div className="vcam-preview">
+          <canvas ref={canvasRef} className="vcam-canvas" />
+        </div>
+
+        <div className="vcam-info">
+          <div className="vcam-info-row">
+            <span className="vcam-info-label">Resolution:</span>
+            <span className="vcam-info-value">{OUTPUT_WIDTH}×{OUTPUT_HEIGHT}</span>
+          </div>
+          <div className="vcam-info-row">
+            <span className="vcam-info-label">FPS:</span>
+            <span className="vcam-info-value">{fps}</span>
+          </div>
+          <div className="vcam-info-row">
+            <span className="vcam-info-label">Stream:</span>
+            <span className="vcam-info-value">
+              <code>window.__screenYardVirtualCameraStream</code>
+            </span>
+          </div>
+        </div>
+
+        <div className="vcam-instructions">
+          <div className="vcam-instructions-title">📋 Cómo usar en Google Meet:</div>
+          <ol>
+            <li>Instala <a href="https://obsproject.com" target="_blank" rel="noopener">OBS Studio</a></li>
+            <li>OBS → Sources → <strong>+ → Browser</strong></li>
+            <li>URL: <code>http://localhost:5173</code> (esta página)</li>
+            <li>Width: {OUTPUT_WIDTH}, Height: {OUTPUT_HEIGHT}</li>
+            <li>OBS → <strong>Start Virtual Camera</strong></li>
+            <li>Meet → Settings → Video → Camera → <strong>OBS Virtual Camera</strong></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  );
+};

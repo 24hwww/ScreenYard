@@ -6,6 +6,8 @@ interface ToolbarProps {
   onAddWindow: (type: WindowType) => void;
   onClearAll: () => void;
   onScan: () => void;
+  onToggleVirtualCamera: () => void;
+  isVirtualCameraActive: boolean;
   isPresentationMode: boolean;
   onTogglePresentation: () => void;
   isDebugVisible: boolean;
@@ -22,6 +24,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onAddWindow,
   onClearAll,
   onScan,
+  onToggleVirtualCamera,
+  isVirtualCameraActive,
   isPresentationMode,
   onTogglePresentation,
   isDebugVisible,
@@ -51,6 +55,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         >
           <span className="toolbar-btn-icon">📷</span>
           <span className="toolbar-btn-text">Scan</span>
+        </button>
+        <button
+          className={`toolbar-btn ${isVirtualCameraActive ? 'toolbar-btn--vcam-active' : 'toolbar-btn--vcam'}`}
+          onClick={onToggleVirtualCamera}
+          title="Toggle virtual camera output"
+        >
+          <span className="toolbar-btn-icon">🎥</span>
+          <span className="toolbar-btn-text">{isVirtualCameraActive ? 'VCam ON' : 'VCam'}</span>
         </button>
         <button
           className="toolbar-btn toolbar-btn--clear"
