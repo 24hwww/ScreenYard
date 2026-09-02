@@ -136,6 +136,9 @@ export const Stage: React.FC<StageProps> = ({
   );
 
   // ─── Start webcam on mount ───
+  // This effect runs once on mount. In React StrictMode (dev), effects run
+  // twice (mount → cleanup → mount). The `cancelled` flag + `destroy()` in
+  // cleanup ensures no duplicate MediaPipe instances or camera streams.
   useEffect(() => {
     let cancelled = false;
 
@@ -160,8 +163,7 @@ export const Stage: React.FC<StageProps> = ({
 
         const trackingVideo = document.createElement('video');
         // Visually hidden but still rendered (NOT display:none) so the browser
-        // decodes frames and requestVideoFrameCallback fires correctly.
-        // display:none prevents frame composition, which breaks rVFC.
+        // decodes frames. display:none prevents frame composition.
         trackingVideo.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;top:-1px;left:-1px;';
         trackingVideo.autoplay = true;
         trackingVideo.playsInline = true;
@@ -173,6 +175,8 @@ export const Stage: React.FC<StageProps> = ({
 
         if (cancelled) { cleanup(); return; }
 
+        // Guard: if HandTracker was already initialized (e.g. StrictMode remount),
+        // destroy() is called inside initialize() to clean up the old instance.
         const fgEl = foregroundRef.current;
         await handTracker.initialize(trackingVideo, fgEl?.clientWidth ?? 1280, fgEl?.clientHeight ?? 720);
         handTracker.start((results) => gestureRecognizer.processAllHands(results));
@@ -185,9 +189,23 @@ export const Stage: React.FC<StageProps> = ({
     };
 
     const cleanup = () => {
-      handTracker.stop();
-      if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-      if (trackingVideoRef.current) { trackingVideoRef.current.srcObject = null; trackingVideoRef.current.remove(); trackingVideoRef.current = null; }
+      // Full teardown: stop rAF loop + destroy MediaPipe landmarker + release GPU
+      handTracker.destroy();
+      // Stop all camera tracks
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      // Remove tracking video from DOM
+      if (trackingVideoRef.current) {
+        trackingVideoRef.current.srcObject = null;
+        trackingVideoRef.current.remove();
+        trackingVideoRef.current = null;
+      }
+      // Clear background video srcObject
+      if (bgVideoRef.current) {
+        bgVideoRef.current.srcObject = null;
+      }
     };
 
     startCamera();
@@ -268,10 +286,12 @@ export const Stage: React.FC<StageProps> = ({
   );
 
   // ─── Gesture events → actions ───
+  // Track drag state per hand so both hands can interact independently
+  const gestureDragStateRef = useRef<Map<number, { windowId: string; offset: { x: number; y: number } }>>(new Map());
+
   useEffect(() => {
     const handleGestureEvent = (event: GestureEvent) => {
-      if (event.handIndex !== 0) return;
-
+      // Update debug state for both hands
       setGestureState(gestureRecognizer.getState());
 
       const fgEl = foregroundRef.current;
@@ -281,17 +301,20 @@ export const Stage: React.FC<StageProps> = ({
 
       const stageX = event.position.x * rect.width;
       const stageY = event.position.y * rect.height;
+      const handIdx = event.handIndex;
 
       switch (event.type) {
-        case 'pointer-move':
-          if (draggingWindowId && event.isPinching && dragSource === 'gesture') {
-            const newX = stageX - gestureDragOffset.current.x;
-            const newY = stageY - gestureDragOffset.current.y;
-            onStateChange(moveWindow(state, draggingWindowId, { x: newX, y: newY }));
-            const win = state.windows.find((w) => w.id === draggingWindowId);
+        case 'pointer-move': {
+          const dragState = gestureDragStateRef.current.get(handIdx);
+          if (dragState && event.isPinching) {
+            const newX = stageX - dragState.offset.x;
+            const newY = stageY - dragState.offset.y;
+            onStateChange(moveWindow(state, dragState.windowId, { x: newX, y: newY }));
+            const win = state.windows.find((w) => w.id === dragState.windowId);
             if (win) setTrashProgress(calculateTrashOverlap(newX, newY, win.size.width, win.size.height));
           }
           break;
+        }
 
         case 'pinch-start': {
           const sorted = [...state.windows].sort((a, b) => b.zIndex - a.zIndex);
@@ -299,13 +322,20 @@ export const Stage: React.FC<StageProps> = ({
             if (win.locked) continue;
             if (stageX >= win.position.x && stageX <= win.position.x + win.size.width &&
                 stageY >= win.position.y && stageY <= win.position.y + win.size.height) {
-              setDraggingWindowId(win.id);
-              setDragSource('gesture');
-              gestureDragOffset.current = { x: stageX - win.position.x, y: stageY - win.position.y };
+              gestureDragStateRef.current.set(handIdx, {
+                windowId: win.id,
+                offset: { x: stageX - win.position.x, y: stageY - win.position.y },
+              });
+              // Also set the legacy drag state for the primary hand (handIndex 0)
+              // so mouse-based drag tracking stays compatible
+              if (handIdx === 0) {
+                setDraggingWindowId(win.id);
+                setDragSource('gesture');
+                gestureDragOffset.current = { x: stageX - win.position.x, y: stageY - win.position.y };
+              }
               setTrashVisible(true);
               setTrashProgress(0);
-              onStateChange(selectWindow(state, win.id));
-              onStateChange(bringToFront(state, win.id));
+              onStateChange(selectWindow(bringToFront(state, win.id), win.id));
               break;
             }
           }
@@ -313,21 +343,33 @@ export const Stage: React.FC<StageProps> = ({
         }
 
         case 'pinch-end': {
-          if (draggingWindowId && dragSource === 'gesture') {
-            const win = state.windows.find((w) => w.id === draggingWindowId);
+          const dragState = gestureDragStateRef.current.get(handIdx);
+          if (dragState) {
+            const win = state.windows.find((w) => w.id === dragState.windowId);
             if (win) {
               const overlap = calculateTrashOverlap(win.position.x, win.position.y, win.size.width, win.size.height);
-              if (overlap > 0.5) onStateChange(removeWindow(state, draggingWindowId));
+              if (overlap > 0.5) onStateChange(removeWindow(state, dragState.windowId));
             }
+            gestureDragStateRef.current.delete(handIdx);
           }
-          setDraggingWindowId(null);
-          setDragSource(null);
-          setTrashVisible(false);
-          setTrashProgress(0);
+          // Clear legacy drag state if primary hand
+          if (handIdx === 0) {
+            setDraggingWindowId(null);
+            setDragSource(null);
+          }
+          // Hide trash if no hands are dragging
+          if (gestureDragStateRef.current.size === 0) {
+            setTrashVisible(false);
+            setTrashProgress(0);
+          }
           break;
         }
 
         case 'finger-count': {
+          // Only process finger-count from the primary hand (handIndex 0)
+          // to avoid confusion when both hands change finger counts
+          if (handIdx !== 0) break;
+
           const prevCount = lastFingerCountRef.current;
           const newCount = event.fingerCount;
 
@@ -387,7 +429,7 @@ export const Stage: React.FC<StageProps> = ({
 
     gestureRecognizer.addListener(handleGestureEvent);
     return () => gestureRecognizer.removeListener(handleGestureEvent);
-  }, [state, draggingWindowId, dragSource, onStateChange, calculateTrashOverlap, spawnEmoji]);
+  }, [state, onStateChange, calculateTrashOverlap, spawnEmoji]);
 
   return (
     <div

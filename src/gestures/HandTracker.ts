@@ -82,12 +82,13 @@ function angle3D(a: Point3D, b: Point3D, c: Point3D): number {
 }
 
 /**
- * Compute hand size as the distance from wrist to middle MCP.
- * This is a stable reference for normalizing measurements across
- * different hand distances from the camera.
+ * Compute hand size as the 2D distance from wrist to middle MCP.
+ * Uses 2D (x, y) because MediaPipe's z-coordinate for hand landmarks
+ * is relative and noisy. This is a stable reference for normalizing
+ * measurements across different hand distances from the camera.
  */
 function computeHandSize(landmarks3D: Point3D[]): number {
-  return dist3D(landmarks3D[WRIST], landmarks3D[MIDDLE_MCP]);
+  return dist2D(landmarks3D[WRIST], landmarks3D[MIDDLE_MCP]);
 }
 
 /**
@@ -100,40 +101,30 @@ export class HandTracker {
   private handLandmarker: any | null = null;
   private videoElement: HTMLVideoElement | null = null;
   private animationFrameId: number | null = null;
-  private videoFrameCallbackId: number | null = null;
   private callback: HandTrackerCallback | null = null;
   private running = false;
+  private initialized = false;
 
   /** Mirror X to make interaction feel natural (like a mirror) */
   private mirrorX = true;
 
-  /** Minimum confidence to accept a hand detection (0-1) */
-  private minConfidence = 0.5;
-
-  /** Whether the browser supports requestVideoFrameCallback */
-  private useVideoFrameCallback = false;
-
-  /** Safety timer: if rVFC doesn't fire within this many ms, fall back to rAF */
-  private rvfcFallbackTimer: number | null = null;
-  private rvfcFallbackDelay = 500; // ms — if no frame in 500ms, use rAF
-  private rvfcHasFired = false;
-
-  /** Adaptive frame skipping: if inference takes longer than this, skip frames */
-  private lastInferenceTime = 0; // ms
-  private frameSkipBudget = 33; // ms (30fps target)
-  private skipNextFrames = 0; // how many upcoming frames to skip
+  /** Minimum confidence to accept a hand detection (0-1).
+   * Uses handedness score from MediaPipe, not wrist visibility
+   * (which is always 0 for hand landmarks). */
+  private minConfidence = 0.3;
 
   async initialize(
     videoElement: HTMLVideoElement,
     _stageWidth: number,
     _stageHeight: number,
   ): Promise<void> {
-    this.videoElement = videoElement;
+    // Guard: if already initialized, destroy the old landmarker first
+    // to prevent multiple MediaPipe instances accumulating in memory
+    if (this.initialized) {
+      this.destroy();
+    }
 
-    // Check if requestVideoFrameCallback is available (more efficient than rAF
-    // for video processing — only fires when a new frame is ready)
-    this.useVideoFrameCallback =
-      typeof (videoElement as any).requestVideoFrameCallback === 'function';
+    this.videoElement = videoElement;
 
     const { HandLandmarker, FilesetResolver } = await import(
       '@mediapipe/tasks-vision'
@@ -174,10 +165,15 @@ export class HandTracker {
         minTrackingConfidence: 0.5,
       });
     }
+    this.initialized = true;
   }
 
   start(callback: HandTrackerCallback): void {
     if (this.running) return;
+    if (!this.handLandmarker || !this.videoElement) {
+      console.warn('HandTracker.start() called before initialize()');
+      return;
+    }
     this.running = true;
     this.callback = callback;
     this.detect();
@@ -189,15 +185,26 @@ export class HandTracker {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    if (this.videoFrameCallbackId !== null && this.videoElement) {
-      (this.videoElement as any).cancelVideoFrameCallback?.(this.videoFrameCallbackId);
-      this.videoFrameCallbackId = null;
-    }
-    if (this.rvfcFallbackTimer !== null) {
-      clearTimeout(this.rvfcFallbackTimer);
-      this.rvfcFallbackTimer = null;
-    }
     this.callback = null;
+  }
+
+  /** Full teardown: stop loop + destroy MediaPipe landmarker + release GPU memory */
+  destroy(): void {
+    this.stop();
+    if (this.handLandmarker) {
+      try {
+        this.handLandmarker.close?.();
+      } catch (e) {
+        // close() may throw if already closed — ignore
+      }
+      this.handLandmarker = null;
+    }
+    this.videoElement = null;
+    this.initialized = false;
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
   }
 
   // ─── Orientation Detection ───
@@ -226,28 +233,29 @@ export class HandTracker {
       z: (wrist.z + middleMcp.z) / 2,
     };
 
+    // Use 2D distances for reliability (z is noisy in MediaPipe hand landmarks)
     const tipDistances = [
-      dist3D(landmarks3D[INDEX_TIP], palmCenter),
-      dist3D(landmarks3D[MIDDLE_TIP], palmCenter),
-      dist3D(landmarks3D[RING_TIP], palmCenter),
-      dist3D(landmarks3D[PINKY_TIP], palmCenter),
+      dist2D(landmarks3D[INDEX_TIP], palmCenter),
+      dist2D(landmarks3D[MIDDLE_TIP], palmCenter),
+      dist2D(landmarks3D[RING_TIP], palmCenter),
+      dist2D(landmarks3D[PINKY_TIP], palmCenter),
     ];
 
     const avgTipDist = tipDistances.reduce((a, b) => a + b, 0) / tipDistances.length;
-    // Normalize by hand size for robustness across distances
-    const thumbIndexDist = dist3D(landmarks3D[THUMB_TIP], landmarks3D[INDEX_TIP]);
-    const normalizedThumbIndex = thumbIndexDist / handSize;
+    const handSize2D = dist2D(wrist, middleMcp) || 0.0001;
+    const thumbIndexDist = dist2D(landmarks3D[THUMB_TIP], landmarks3D[INDEX_TIP]);
+    const normalizedThumbIndex = thumbIndexDist / handSize2D;
 
-    // Pinch: normalized distance small (works regardless of hand distance from camera)
+    // Pinch: normalized distance small
     if (normalizedThumbIndex < 0.35) return 'pinch';
     // Fist: all fingertips close to palm center (normalized)
-    if (avgTipDist / handSize < 0.6) return 'fist';
+    if (avgTipDist / handSize2D < 0.6) return 'fist';
 
-    const indexExtended = tipDistances[0] / handSize > 0.9;
-    const othersCurled = tipDistances[1] / handSize < 0.7 && tipDistances[2] / handSize < 0.7 && tipDistances[3] / handSize < 0.7;
+    const indexExtended = tipDistances[0] / handSize2D > 0.9;
+    const othersCurled = tipDistances[1] / handSize2D < 0.7 && tipDistances[2] / handSize2D < 0.7 && tipDistances[3] / handSize2D < 0.7;
     if (indexExtended && othersCurled) return 'point';
 
-    if (avgTipDist / handSize > 0.85) return 'open';
+    if (avgTipDist / handSize2D > 0.85) return 'open';
 
     return 'unknown';
   }
@@ -268,34 +276,45 @@ export class HandTracker {
   private countFingers(landmarks3D: Point3D[], handSize: number): number {
     let count = 0;
 
+    // Use 2D distances (x, y) from the WRIST as the primary signal.
+    // MediaPipe's z-coordinate for hand landmarks is relative and noisy,
+    // so 3D distances and angles are unreliable for finger counting.
+    //
+    // When a finger is EXTENDED: the tip is farther from the wrist than the PIP joint.
+    // When a finger is CURLED: the tip comes back toward the palm, closer to the wrist.
+    //
+    // This is rotation-invariant in 2D and works regardless of hand orientation.
+
+    const wrist = landmarks3D[WRIST];
+
     // ── Thumb ──
-    // Use angle at IP joint + distance from palm center
-    const thumbAngle = angle3D(landmarks3D[THUMB_MCP], landmarks3D[THUMB_IP], landmarks3D[THUMB_TIP]);
-    const palmCenter: Point3D = {
-      x: (landmarks3D[WRIST].x + landmarks3D[MIDDLE_MCP].x) / 2,
-      y: (landmarks3D[WRIST].y + landmarks3D[MIDDLE_MCP].y) / 2,
-      z: (landmarks3D[WRIST].z + landmarks3D[MIDDLE_MCP].z) / 2,
-    };
-    const thumbTipDist = dist3D(landmarks3D[THUMB_TIP], palmCenter);
-    const thumbIpDist = dist3D(landmarks3D[THUMB_IP], palmCenter);
-    // Thumb is extended if: angle is relatively straight AND tip is farther from palm than IP
-    if (thumbAngle > 140 && thumbTipDist > thumbIpDist + handSize * 0.05) count++;
+    // Thumb moves differently — compare tip distance from INDEX_MCP vs
+    // THUMB_MCP distance from INDEX_MCP. When extended, the thumb tip is
+    // farther from the index knuckle than the thumb base is.
+    const indexMcp = landmarks3D[INDEX_MCP];
+    const thumbTipDist = dist2D(landmarks3D[THUMB_TIP], indexMcp);
+    const thumbMcpDist = dist2D(landmarks3D[THUMB_MCP], indexMcp);
+    if (thumbTipDist > thumbMcpDist * 0.8) count++;
 
     // ── Index ──
-    const indexAngle = angle3D(landmarks3D[INDEX_MCP], landmarks3D[INDEX_PIP], landmarks3D[INDEX_DIP]);
-    if (indexAngle > 160) count++;
+    const indexTipWrist = dist2D(landmarks3D[INDEX_TIP], wrist);
+    const indexPipWrist = dist2D(landmarks3D[INDEX_PIP], wrist);
+    if (indexTipWrist > indexPipWrist) count++;
 
     // ── Middle ──
-    const middleAngle = angle3D(landmarks3D[MIDDLE_MCP], landmarks3D[MIDDLE_PIP], landmarks3D[MIDDLE_DIP]);
-    if (middleAngle > 160) count++;
+    const middleTipWrist = dist2D(landmarks3D[MIDDLE_TIP], wrist);
+    const middlePipWrist = dist2D(landmarks3D[MIDDLE_PIP], wrist);
+    if (middleTipWrist > middlePipWrist) count++;
 
     // ── Ring ──
-    const ringAngle = angle3D(landmarks3D[RING_MCP], landmarks3D[RING_PIP], landmarks3D[RING_DIP]);
-    if (ringAngle > 160) count++;
+    const ringTipWrist = dist2D(landmarks3D[RING_TIP], wrist);
+    const ringPipWrist = dist2D(landmarks3D[RING_PIP], wrist);
+    if (ringTipWrist > ringPipWrist) count++;
 
     // ── Pinky ──
-    const pinkyAngle = angle3D(landmarks3D[PINKY_MCP], landmarks3D[PINKY_PIP], landmarks3D[PINKY_DIP]);
-    if (pinkyAngle > 160) count++;
+    const pinkyTipWrist = dist2D(landmarks3D[PINKY_TIP], wrist);
+    const pinkyPipWrist = dist2D(landmarks3D[PINKY_PIP], wrist);
+    if (pinkyTipWrist > pinkyPipWrist) count++;
 
     return count;
   }
@@ -314,22 +333,14 @@ export class HandTracker {
     const thumbIp = landmarks3D[THUMB_IP];
     const wrist = landmarks3D[WRIST];
 
-    // Use 3D angles for finger extension detection
-    const indexAngle = angle3D(landmarks3D[INDEX_MCP], landmarks3D[INDEX_PIP], landmarks3D[INDEX_DIP]);
-    const middleAngle = angle3D(landmarks3D[MIDDLE_MCP], landmarks3D[MIDDLE_PIP], landmarks3D[MIDDLE_DIP]);
-    const ringAngle = angle3D(landmarks3D[RING_MCP], landmarks3D[RING_PIP], landmarks3D[RING_DIP]);
-    const pinkyAngle = angle3D(landmarks3D[PINKY_MCP], landmarks3D[PINKY_PIP], landmarks3D[PINKY_DIP]);
-
-    const indexExtended = indexAngle > 160;
-    const middleExtended = middleAngle > 160;
-    const ringExtended = ringAngle > 160;
-    const pinkyExtended = pinkyAngle > 160;
+    // Use 2D distance from wrist for finger extension (same as countFingers)
+    const indexExtended = dist2D(landmarks3D[INDEX_TIP], wrist) > dist2D(landmarks3D[INDEX_PIP], wrist);
+    const middleExtended = dist2D(landmarks3D[MIDDLE_TIP], wrist) > dist2D(landmarks3D[MIDDLE_PIP], wrist);
+    const ringExtended = dist2D(landmarks3D[RING_TIP], wrist) > dist2D(landmarks3D[RING_PIP], wrist);
+    const pinkyExtended = dist2D(landmarks3D[PINKY_TIP], wrist) > dist2D(landmarks3D[PINKY_PIP], wrist);
 
     // Thumb up: thumb extended upward, all other fingers curled
-    // Use y-comparison for "up" direction (still needed for orientation)
-    // but add angle check for thumb straightness
-    const thumbAngle = angle3D(landmarks3D[THUMB_MCP], landmarks3D[THUMB_IP], landmarks3D[THUMB_TIP]);
-    const thumbPointsUp = thumbTip.y < thumbIp.y - 0.03 && thumbTip.y < thumbMcp.y - 0.05 && thumbAngle > 140;
+    const thumbPointsUp = thumbTip.y < thumbIp.y - 0.03 && thumbTip.y < thumbMcp.y - 0.05;
     const othersCurled = !indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
 
     if (thumbPointsUp && othersCurled) {
@@ -347,153 +358,108 @@ export class HandTracker {
   // ─── Main Detection Loop ───
 
   private detect = (): void => {
-    if (!this.running || !this.videoElement || !this.handLandmarker) {
-      // Still clean up the fallback timer if we're not going to process
-      if (this.rvfcFallbackTimer !== null) {
-        clearTimeout(this.rvfcFallbackTimer);
-        this.rvfcFallbackTimer = null;
-      }
-      return;
-    }
-
-    // Mark that rVFC has fired (used by the fallback safety timer)
-    this.rvfcHasFired = true;
-    if (this.rvfcFallbackTimer !== null) {
-      clearTimeout(this.rvfcFallbackTimer);
-      this.rvfcFallbackTimer = null;
-    }
+    if (!this.running || !this.videoElement || !this.handLandmarker) return;
 
     if (this.videoElement.readyState >= 2) {
-      // Adaptive frame skipping: if the previous inference took longer than
-      // our budget, skip frames to maintain real-time pipeline.
-      if (this.skipNextFrames > 0) {
-        this.skipNextFrames--;
-      } else {
-        const inferStart = performance.now();
-        const results = this.handLandmarker.detectForVideo(
-          this.videoElement,
-          performance.now(),
-        );
-        this.lastInferenceTime = performance.now() - inferStart;
-
-        // If inference took longer than budget, skip the next N frames
-        // to allow the pipeline to catch up (N = ceil(inferenceTime / budget))
-        if (this.lastInferenceTime > this.frameSkipBudget) {
-          this.skipNextFrames = Math.ceil(this.lastInferenceTime / this.frameSkipBudget) - 1;
-        }
-
-        const handResults: HandLandmarkResult[] = [];
-
-        if (results.landmarks && results.landmarks.length > 0) {
-          // MediaPipe returns handednesses (Left/Right with confidence score) per hand.
-          // Use this for stable handIndex assignment instead of detection order,
-          // which can swap frame-to-frame when hands overlap.
-          // handIndex 0 = Left (primary), handIndex 1 = Right (secondary)
-          const handednesses: any[] = results.handednesses || results.handedness || [];
-
-          for (let i = 0; i < results.landmarks.length; i++) {
-            const hand = results.landmarks[i];
-            const wrist = hand[0];
-
-            // Confidence filtering: skip low-confidence detections
-            const confidence = wrist.visibility ?? 0.8;
-            if (confidence < this.minConfidence) continue;
-
-            // Determine stable handIndex from handedness label.
-            // MediaPipe label is "Left" or "Right" (from the model's perspective,
-            // which is mirrored when mirrorX is true). We want handIndex 0 = the
-            // hand that appears on the left side of the screen (user's right hand
-            // in a mirrored view), which is the primary interaction hand.
-            let handIndex = i; // fallback to detection order
-            if (handednesses[i] && handednesses[i].length > 0) {
-              const label = handednesses[i][0].categoryName || handednesses[i][0].label;
-              // When mirrored, MediaPipe's "Left" appears on the right side of screen.
-              // We want handIndex 0 = left side of screen = primary hand.
-              // So: if mirrored, "Left" → handIndex 1, "Right" → handIndex 0
-              // If not mirrored, "Left" → handIndex 0, "Right" → handIndex 1
-              if (this.mirrorX) {
-                handIndex = label === 'Left' ? 1 : 0;
-              } else {
-                handIndex = label === 'Left' ? 0 : 1;
-              }
-            }
-
-            const landmarks3D: Point3D[] = hand.map((l: any) => ({
-              x: this.mirrorX ? 1 - l.x : l.x,
-              y: l.y,
-              z: l.z,
-            }));
-
-            const rawIndexTip = hand[INDEX_TIP];
-            const rawThumbTip = hand[THUMB_TIP];
-
-            let indexX = rawIndexTip.x;
-            let indexY = rawIndexTip.y;
-            let thumbX = rawThumbTip.x;
-            let thumbY = rawThumbTip.y;
-
-            if (this.mirrorX) {
-              indexX = 1 - indexX;
-              thumbX = 1 - thumbX;
-            }
-
-            const indexTip: GesturePoint = { x: indexX, y: indexY };
-            const thumbTip: GesturePoint = { x: thumbX, y: thumbY };
-
-            const handSize = computeHandSize(landmarks3D);
-            const orientation = this.detectOrientation(landmarks3D);
-            const pose = this.detectPose(landmarks3D, handSize);
-            const fingerCount = this.countFingers(landmarks3D, handSize);
-            const gesture = this.detectGesture(landmarks3D, fingerCount);
-
-            // Normalized pinch distance (by hand size)
-            const pinchDist2D = dist2D(landmarks3D[INDEX_TIP], landmarks3D[THUMB_TIP]);
-            const normalizedPinchDistance = handSize > 0 ? pinchDist2D / handSize : pinchDist2D;
-
-            handResults.push({
-              landmarks: landmarks3D.map((l) => ({ x: l.x, y: l.y })),
-              landmarks3D,
-              confidence,
-              indexTip,
-              thumbTip,
-              handIndex,
-              orientation,
-              pose,
-              fingerCount,
-              gesture,
-              handSize,
-              normalizedPinchDistance,
-            });
-          }
-        }
-
-        this.callback?.(handResults);
-      }
-    }
-
-    // Schedule next detection frame.
-    // Prefer requestVideoFrameCallback (fires only on new video frames, more
-    // efficient than rAF). But rVFC may not fire if the video element is not
-    // being composited (e.g. display:none, or off-screen in some browsers).
-    // Safety: if rVFC hasn't fired within 500ms, fall back to rAF permanently.
-    if (this.useVideoFrameCallback && this.videoElement) {
-      this.rvfcHasFired = false;
-      this.videoFrameCallbackId = (this.videoElement as any).requestVideoFrameCallback(
-        this.detect,
+      const results = this.handLandmarker.detectForVideo(
+        this.videoElement,
+        performance.now(),
       );
-      // Set fallback timer — if detect doesn't fire via rVFC, switch to rAF
-      if (this.rvfcFallbackTimer === null) {
-        this.rvfcFallbackTimer = window.setTimeout(() => {
-          if (!this.rvfcHasFired) {
-            console.warn('requestVideoFrameCallback did not fire, falling back to requestAnimationFrame');
-            this.useVideoFrameCallback = false;
-            this.rvfcFallbackTimer = null;
-            if (this.running) this.animationFrameId = requestAnimationFrame(this.detect);
+
+      const handResults: HandLandmarkResult[] = [];
+
+      if (results.landmarks && results.landmarks.length > 0) {
+        // MediaPipe returns handednesses (Left/Right with confidence score) per hand.
+        const handednesses: any[] = results.handednesses || results.handedness || [];
+
+        for (let i = 0; i < results.landmarks.length; i++) {
+          const hand = results.landmarks[i];
+          const wrist = hand[0];
+
+          // Confidence: MediaPipe HandLandmarker does NOT populate visibility
+          // on landmarks (that's PoseLandmarker). Use handedness score instead,
+          // or default to 0.8 if not available.
+          const handH = handednesses[i]?.[0];
+          const confidence = handH?.score ?? 0.8;
+          if (confidence < this.minConfidence) continue;
+
+          // Determine stable handIndex from handedness label.
+          // MediaPipe sees the RAW (unmirrored) video. In the raw frame:
+          //   - User's LEFT hand is on the RIGHT side → MediaPipe labels it "Left"
+          //   - User's RIGHT hand is on the LEFT side → MediaPipe labels it "Right"
+          // After mirrorX, the screen flips like a mirror:
+          //   - "Left" (user's left hand) appears on the LEFT side of screen
+          //   - "Right" (user's right hand) appears on the RIGHT side of screen
+          // We want handIndex 0 = left side of screen, handIndex 1 = right side.
+          let handIndex = i; // fallback to detection order
+          if (handednesses[i] && handednesses[i].length > 0) {
+            const label = handednesses[i][0].categoryName || handednesses[i][0].label;
+            if (this.mirrorX) {
+              // Mirrored: "Left" → left side of screen → handIndex 0
+              handIndex = label === 'Left' ? 0 : 1;
+            } else {
+              // Not mirrored: "Left" → right side of screen → handIndex 1
+              handIndex = label === 'Left' ? 1 : 0;
+            }
           }
-        }, this.rvfcFallbackDelay);
+
+          const landmarks3D: Point3D[] = hand.map((l: any) => ({
+            x: this.mirrorX ? 1 - l.x : l.x,
+            y: l.y,
+            z: l.z,
+          }));
+
+          const rawIndexTip = hand[INDEX_TIP];
+          const rawThumbTip = hand[THUMB_TIP];
+
+          let indexX = rawIndexTip.x;
+          let indexY = rawIndexTip.y;
+          let thumbX = rawThumbTip.x;
+          let thumbY = rawThumbTip.y;
+
+          if (this.mirrorX) {
+            indexX = 1 - indexX;
+            thumbX = 1 - thumbX;
+          }
+
+          const indexTip: GesturePoint = { x: indexX, y: indexY };
+          const thumbTip: GesturePoint = { x: thumbX, y: thumbY };
+
+          const handSize = computeHandSize(landmarks3D);
+          const orientation = this.detectOrientation(landmarks3D);
+          const pose = this.detectPose(landmarks3D, handSize);
+          const fingerCount = this.countFingers(landmarks3D, handSize);
+          const gesture = this.detectGesture(landmarks3D, fingerCount);
+
+          // Normalized pinch distance (by hand size)
+          const pinchDist2D = dist2D(landmarks3D[INDEX_TIP], landmarks3D[THUMB_TIP]);
+          const normalizedPinchDistance = handSize > 0 ? pinchDist2D / handSize : pinchDist2D;
+
+          handResults.push({
+            landmarks: landmarks3D.map((l) => ({ x: l.x, y: l.y })),
+            landmarks3D,
+            confidence,
+            indexTip,
+            thumbTip,
+            handIndex,
+            orientation,
+            pose,
+            fingerCount,
+            gesture,
+            handSize,
+            normalizedPinchDistance,
+          });
+        }
       }
-    } else {
-      this.animationFrameId = requestAnimationFrame(this.detect);
+
+      // ALWAYS call callback, even with empty results (so GestureRecognizer
+      // can emit hand-lost events). Never skip this.
+      this.callback?.(handResults);
     }
+
+    // Always use requestAnimationFrame for reliable continuous detection.
+    // requestVideoFrameCallback can stop firing when the video element is
+    // very small or throttled by the browser, causing detection to freeze.
+    this.animationFrameId = requestAnimationFrame(this.detect);
   };
 }
