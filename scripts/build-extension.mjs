@@ -38,6 +38,10 @@ console.log('  ✓ content_script.js');
 copyFileSync(join(PUBLIC, 'injected.js'), join(DIST, 'injected.js'));
 console.log('  ✓ injected.js');
 
+// Copy diagnostic.html (diagnostic page for testing virtual camera)
+copyFileSync(join(PUBLIC, 'diagnostic.html'), join(DIST, 'diagnostic.html'));
+console.log('  ✓ diagnostic.html');
+
 // Copy icons
 const iconsSrc = join(PUBLIC, 'icons');
 const iconsDist = join(DIST, 'icons');

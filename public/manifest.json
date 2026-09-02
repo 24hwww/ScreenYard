@@ -65,7 +65,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["index.html", "assets/*", "mediapipe/*"],
+      "resources": ["index.html", "diagnostic.html", "assets/*", "mediapipe/*"],
       "matches": ["<all_urls>"]
     }
   ],

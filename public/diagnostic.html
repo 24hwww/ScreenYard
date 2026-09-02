@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ScreenYard Diagnostic</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; max-width: 800px; margin: 0 auto; }
+    h1 { color: #0ff; }
+    h2 { color: #0af; margin-top: 30px; }
+    .ok { color: #0f0; }
+    .fail { color: #f00; }
+    .warn { color: #ff0; }
+    pre { background: #111; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    button { background: #0af; color: #fff; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; margin: 5px; }
+    button:hover { background: #08d; }
+    .test { padding: 10px; margin: 5px 0; border-left: 3px solid #333; }
+    .test.pass { border-color: #0f0; }
+    .test.fail { border-color: #f00; }
+  </style>
+</head>
+<body>
+  <h1>ScreenYard Diagnostic</h1>
+  <p>This page checks if the ScreenYard virtual camera injection is working.</p>
+
+  <h2>1. Extension Status</h2>
+  <div id="ext-status" class="test">Checking...</div>
+
+  <h2>2. navigator.mediaDevices</h2>
+  <div id="md-status" class="test">Checking...</div>
+
+  <h2>3. enumerateDevices</h2>
+  <button onclick="testEnumerate()">Test enumerateDevices()</button>
+  <div id="enum-status" class="test">Click the button above</div>
+
+  <h2>4. Override Detection</h2>
+  <div id="override-status" class="test">Checking...</div>
+
+  <h2>5. Background Connection</h2>
+  <button onclick="testBackground()">Test background connection</button>
+  <div id="bg-status" class="test">Click the button above</div>
+
+  <h2>6. Raw Logs</h2>
+  <pre id="logs"></pre>
+
+  <script>
+    var logs = [];
+    function log(msg) {
+      logs.push(new Date().toISOString().split('T')[1] + ' ' + msg);
+      document.getElementById('logs').textContent = logs.join('\n');
+      console.log('[ScreenYard Diag]', msg);
+    }
+
+    // Test 1: Extension status
+    try {
+      var isExt = !!(chrome && chrome.runtime && chrome.runtime.id);
+      document.getElementById('ext-status').innerHTML = 
+        '<span class="' + (isExt ? 'ok' : 'fail') + '">' + 
+        (isExt ? 'PASS' : 'FAIL') + '</span> Running as extension: ' + isExt +
+        (isExt ? ' (ID: ' + chrome.runtime.id + ')' : '');
+      document.getElementById('ext-status').className = 'test ' + (isExt ? 'pass' : 'fail');
+      log('Extension: ' + isExt + ' ID: ' + (chrome.runtime?.id || 'none'));
+    } catch (e) {
+      document.getElementById('ext-status').innerHTML = '<span class="fail">FAIL</span> ' + e.message;
+      log('Extension check error: ' + e.message);
+    }
+
+    // Test 2: navigator.mediaDevices
+    try {
+      var md = navigator.mediaDevices;
+      var exists = !!md;
+      document.getElementById('md-status').innerHTML = 
+        '<span class="' + (exists ? 'ok' : 'fail') + '">' + 
+        (exists ? 'PASS' : 'FAIL') + '</span> navigator.mediaDevices exists: ' + exists;
+      document.getElementById('md-status').className = 'test ' + (exists ? 'pass' : 'fail');
+      log('navigator.mediaDevices: ' + exists);
+    } catch (e) {
+      document.getElementById('md-status').innerHTML = '<span class="fail">FAIL</span> ' + e.message;
+      log('mediaDevices check error: ' + e.message);
+    }
+
+    // Test 3: enumerateDevices
+    function testEnumerate() {
+      var status = document.getElementById('enum-status');
+      status.innerHTML = 'Running...';
+      status.className = 'test';
+      
+      navigator.mediaDevices.enumerateDevices().then(function (devices) {
+        var screenyard = devices.find(function (d) { return d.deviceId === 'screenyard-virtual-camera'; });
+        var html = '<span class="' + (screenyard ? 'ok' : 'fail') + '">' + 
+          (screenyard ? 'PASS' : 'FAIL') + '</span> Found ' + devices.length + ' devices. ' +
+          'ScreenYard present: ' + (screenyard ? 'YES' : 'NO') + '\n\n' +
+          devices.map(function (d) { 
+            return '  - ' + d.kind + ': ' + (d.label || '(no label)') + ' [id: ' + d.deviceId.substring(0, 20) + ']'; 
+          }).join('\n');
+        status.innerHTML = html;
+        status.className = 'test ' + (screenyard ? 'pass' : 'fail');
+        log('enumerateDevices: ' + devices.length + ' devices, ScreenYard: ' + !!screenyard);
+      }).catch(function (e) {
+        status.innerHTML = '<span class="fail">FAIL</span> ' + e.message;
+        status.className = 'test fail';
+        log('enumerateDevices error: ' + e.message);
+      });
+    }
+
+    // Test 4: Override detection
+    try {
+      var md = navigator.mediaDevices;
+      var hasProxy = md && md.__screenYardProxy;
+      var hasOverride = md && md.__screenYardOverridden;
+      var protoOverridden = typeof MediaDevices !== 'undefined' && MediaDevices.prototype.__screenYardOverridden;
+      var navProtoOverridden = false;
+      try {
+        var desc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'mediaDevices');
+        navProtoOverridden = desc && desc.get && desc.get.toString().indexOf('proxyMediaDevices') >= 0;
+      } catch (e) {}
+
+      var anyOverride = hasProxy || hasOverride || protoOverridden;
+      document.getElementById('override-status').innerHTML = 
+        '<span class="' + (anyOverride ? 'ok' : 'fail') + '">' + 
+        (anyOverride ? 'PASS' : 'FAIL') + '</span> Override active: ' + anyOverride + '\n' +
+        '  - Proxy: ' + hasProxy + '\n' +
+        '  - Instance: ' + hasOverride + '\n' +
+        '  - Prototype: ' + protoOverridden + '\n' +
+        '  - Navigator.prototype: ' + navProtoOverridden;
+      document.getElementById('override-status').className = 'test ' + (anyOverride ? 'pass' : 'fail');
+      log('Override: proxy=' + hasProxy + ' instance=' + hasOverride + ' proto=' + protoOverridden);
+    } catch (e) {
+      document.getElementById('override-status').innerHTML = '<span class="fail">FAIL</span> ' + e.message;
+      log('Override check error: ' + e.message);
+    }
+
+    // Test 5: Background connection
+    function testBackground() {
+      var status = document.getElementById('bg-status');
+      status.innerHTML = 'Running...';
+      status.className = 'test';
+      
+      try {
+        chrome.runtime.sendMessage({ type: 'screenyard-register' }, function (response) {
+          if (chrome.runtime.lastError) {
+            status.innerHTML = '<span class="fail">FAIL</span> ' + chrome.runtime.lastError.message;
+            status.className = 'test fail';
+            log('Background error: ' + chrome.runtime.lastError.message);
+          } else {
+            status.innerHTML = '<span class="ok">PASS</span> Background responded: ' + JSON.stringify(response);
+            status.className = 'test pass';
+            log('Background: responded OK');
+          }
+        });
+      } catch (e) {
+        status.innerHTML = '<span class="fail">FAIL</span> ' + e.message;
+        status.className = 'test fail';
+        log('Background error: ' + e.message);
+      }
+    }
+
+    log('Diagnostic page loaded');
+  </script>
+</body>
+</html>
