@@ -5,6 +5,8 @@ interface VirtualCursorProps {
   position: GesturePoint;
   visible: boolean;
   isPinching: boolean;
+  /** 0-1 how close the pinch is to triggering (0 = far, 1 = pinching) */
+  pinchProximity?: number;
   /** 0 = primary, 1 = secondary hand */
   handIndex?: number;
   /** 0-1 hold progress for finger-count gesture (primary hand only) */
@@ -21,6 +23,7 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
   position,
   visible,
   isPinching,
+  pinchProximity = 0,
   handIndex = 0,
   holdProgress = 0,
   holdLabel,
@@ -29,6 +32,8 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
 
   const isSecondary = handIndex === 1;
   const showHoldRing = holdProgress > 0 && holdProgress < 1 && !isSecondary;
+  // Show proximity ring when fingers are getting close but not yet pinching
+  const showProximity = !isPinching && pinchProximity > 0.3 && !showHoldRing;
 
   return (
     <div
@@ -76,6 +81,17 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
           />
         </svg>
       )}
+      {/* Pinch proximity ring — shows when fingers are approaching pinch */}
+      {showProximity && (
+        <div
+          className="virtual-cursor-proximity"
+          style={{
+            opacity: pinchProximity,
+            transform: `translate(-50%, -50%) scale(${0.8 + pinchProximity * 0.4})`,
+          }}
+        />
+      )}
+
       {/* Outer ring */}
       <div
         className={`virtual-cursor-ring ${isPinching ? 'virtual-cursor-ring--pinching' : ''}`}

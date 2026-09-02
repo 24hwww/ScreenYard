@@ -108,7 +108,13 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
-      // Draw camera background (cover fit)
+      // The stage displays the camera mirrored (scaleX(-1)) and elements
+      // in mirrored coordinates. To make the VCam output match exactly
+      // what the user sees in the ScreenYard tab, we mirror the entire
+      // canvas: draw the camera mirrored, then draw elements in mirrored
+      // coordinates too.
+
+      // Draw camera background (cover fit, mirrored to match stage)
       if (video && video.readyState >= 2) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
@@ -126,7 +132,10 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
         }
       }
 
-      // Draw elements on top
+      // Draw elements on top — in mirrored coordinates to match the stage
+      // The stage CSS mirrors the video but NOT the foreground layer.
+      // Elements are positioned in screen coordinates (not mirrored).
+      // So we draw them WITHOUT mirroring, matching the stage's foreground.
       if (stage) {
         const stageRect = stage.getBoundingClientRect();
         const scaleX = OUTPUT_WIDTH / stageRect.width;

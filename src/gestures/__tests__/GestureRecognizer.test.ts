@@ -66,7 +66,8 @@ describe('GestureRecognizer', () => {
     recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.3, 0.3));
     expect(recognizer.getState().isPinching).toBe(false);
 
-    // Fingers close together (pinch!)
+    // Fingers close together (pinch!) — needs 2 frames for confirmation
+    recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     expect(recognizer.getState().isPinching).toBe(true);
     expect(events.some((e) => e.type === 'pinch-start')).toBe(true);
@@ -77,11 +78,12 @@ describe('GestureRecognizer', () => {
     const events: GestureEvent[] = [];
     recognizer.addListener((e) => events.push(e));
 
-    // Start pinch
+    // Start pinch (2 frames for confirmation)
+    recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     expect(recognizer.getState().isPinching).toBe(true);
 
-    // Release pinch (distance > release threshold 0.10)
+    // Release pinch (distance > release threshold)
     recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.3, 0.3));
     expect(recognizer.getState().isPinching).toBe(false);
     expect(events.some((e) => e.type === 'pinch-end')).toBe(true);
@@ -92,14 +94,16 @@ describe('GestureRecognizer', () => {
     const events: GestureEvent[] = [];
     recognizer.addListener((e) => events.push(e));
 
-    // Start pinch
+    // Start pinch (2 frames for confirmation)
+    recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
 
-    // Move while pinching
+    // Move while pinching (2 more frames)
     recognizer.processHandResult(makeHandResult(0.55, 0.55, 0.54, 0.56));
     recognizer.processHandResult(makeHandResult(0.6, 0.6, 0.59, 0.61));
 
-    expect(events.filter((e) => e.type === 'pinch-move').length).toBe(2);
+    // Second confirmation frame + 2 move frames = 3 pinch-move events
+    expect(events.filter((e) => e.type === 'pinch-move').length).toBe(3);
   });
 
   it('emits hand-lost and pinch-end together when hand lost during pinch', () => {
@@ -107,7 +111,8 @@ describe('GestureRecognizer', () => {
     const events: GestureEvent[] = [];
     recognizer.addListener((e) => events.push(e));
 
-    // Start pinch
+    // Start pinch (2 frames for confirmation)
+    recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     recognizer.processHandResult(makeHandResult(0.5, 0.5, 0.49, 0.51));
     expect(recognizer.getState().isPinching).toBe(true);
 

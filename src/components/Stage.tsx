@@ -467,28 +467,55 @@ export const Stage: React.FC<StageProps> = ({
         }
 
         case 'pinch-start': {
+          // Hit test with expanded padding for easier grabbing
+          const HIT_PADDING = 40; // px — expand the grab area around elements
           const sorted = [...state.windows].sort((a, b) => b.zIndex - a.zIndex);
+          let bestWin: typeof sorted[0] | null = null;
+          let bestDist = Infinity;
+
           for (const win of sorted) {
             if (win.locked) continue;
-            if (stageX >= win.position.x && stageX <= win.position.x + win.size.width &&
-                stageY >= win.position.y && stageY <= win.position.y + win.size.height) {
-              gestureDragStateRef.current.set(handIdx, {
-                windowId: win.id,
-                offset: { x: stageX - win.position.x, y: stageY - win.position.y },
-                startX: stageX,
-                startY: stageY,
-                startTime: performance.now(),
-              });
-              if (handIdx === 0) {
-                setDraggingWindowId(win.id);
-                setDragSource('gesture');
-                gestureDragOffset.current = { x: stageX - win.position.x, y: stageY - win.position.y };
+            // Check if pinch is inside the element (with padding)
+            const inside =
+              stageX >= win.position.x - HIT_PADDING &&
+              stageX <= win.position.x + win.size.width + HIT_PADDING &&
+              stageY >= win.position.y - HIT_PADDING &&
+              stageY <= win.position.y + win.size.height + HIT_PADDING;
+
+            if (inside) {
+              // Prefer the element whose center is closest to the pinch point
+              const cx = win.position.x + win.size.width / 2;
+              const cy = win.position.y + win.size.height / 2;
+              const dist = Math.hypot(stageX - cx, stageY - cy);
+              // Strongly prefer elements where the pinch is actually inside (no padding)
+              const isExactlyInside =
+                stageX >= win.position.x && stageX <= win.position.x + win.size.width &&
+                stageY >= win.position.y && stageY <= win.position.y + win.size.height;
+              const effectiveDist = isExactlyInside ? dist - 1000 : dist;
+              if (effectiveDist < bestDist) {
+                bestDist = effectiveDist;
+                bestWin = win;
               }
-              setTrashVisible(true);
-              setTrashProgress(0);
-              onStateChange(selectWindow(bringToFront(state, win.id), win.id));
-              break;
             }
+          }
+
+          if (bestWin) {
+            const win = bestWin;
+            gestureDragStateRef.current.set(handIdx, {
+              windowId: win.id,
+              offset: { x: stageX - win.position.x, y: stageY - win.position.y },
+              startX: stageX,
+              startY: stageY,
+              startTime: performance.now(),
+            });
+            if (handIdx === 0) {
+              setDraggingWindowId(win.id);
+              setDragSource('gesture');
+              gestureDragOffset.current = { x: stageX - win.position.x, y: stageY - win.position.y };
+            }
+            setTrashVisible(true);
+            setTrashProgress(0);
+            onStateChange(selectWindow(bringToFront(state, win.id), win.id));
           }
           break;
         }
@@ -679,6 +706,7 @@ export const Stage: React.FC<StageProps> = ({
         position={gestureState.indexPosition}
         visible={gestureState.handDetected}
         isPinching={gestureState.isPinching}
+        pinchProximity={Math.max(0, Math.min(1, 1 - (gestureState.pinchDistance - 0.55) / 0.35))}
         handIndex={0}
         holdProgress={fingerHoldProgress}
         holdLabel={fingerHoldProgress > 0 && fingerHoldProgress < 1 ? FINGER_LABELS[lastFingerCountRef.current] : undefined}
@@ -688,6 +716,7 @@ export const Stage: React.FC<StageProps> = ({
           position={gestureState.secondHand.indexPosition}
           visible={true}
           isPinching={gestureState.secondHand.isPinching}
+          pinchProximity={Math.max(0, Math.min(1, 1 - (gestureState.secondHand.pinchDistance - 0.55) / 0.35))}
           handIndex={1}
         />
       )}

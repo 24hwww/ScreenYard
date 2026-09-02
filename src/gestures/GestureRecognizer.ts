@@ -8,11 +8,13 @@ import { GestureSmoother } from './GestureSmoother';
 export type GestureEventListener = (event: GestureEvent) => void;
 
 /** Normalized pinch thresholds (relative to hand size, unitless) */
-const PINCH_THRESHOLD = 0.45;
-const PINCH_RELEASE_THRESHOLD = 0.60;
+const PINCH_THRESHOLD = 0.55;
+const PINCH_RELEASE_THRESHOLD = 0.75;
 
 /** How many consecutive frames a gesture must be detected before emitting */
 const GESTURE_CONFIRM_FRAMES = 3;
+/** Frames a pinch must be sustained before emitting pinch-start (reduces false triggers) */
+const PINCH_CONFIRM_FRAMES = 2;
 
 interface PerHandState {
   handDetected: boolean;
@@ -27,6 +29,8 @@ interface PerHandState {
   /** Frame counter for gesture debouncing */
   gestureFrames: number;
   lastEmittedGesture: RecognizedGesture;
+  /** Frame counter for pinch confirmation */
+  pinchFrames: number;
 }
 
 /**
@@ -128,6 +132,7 @@ export class GestureRecognizer {
         gesture: 'none',
         gestureFrames: 0,
         lastEmittedGesture: 'none',
+        pinchFrames: 0,
       };
       this.hands.set(handIndex, state);
     }
@@ -175,23 +180,32 @@ export class GestureRecognizer {
       timestamp: performance.now(),
     });
 
-    // Pinch state transitions
+    // Pinch state transitions with frame confirmation
     if (!state.isPinching && pinchDistance < PINCH_THRESHOLD) {
-      state.isPinching = true;
-      this.emit({
-        type: 'pinch-start',
-        handIndex,
-        position: smoothed,
-        confidence,
-        isPinching: true,
-        orientation,
-        pose,
-        fingerCount,
-        gesture,
-        timestamp: performance.now(),
-      });
-    } else if (state.isPinching && pinchDistance > PINCH_RELEASE_THRESHOLD) {
+      state.pinchFrames++;
+      if (state.pinchFrames >= PINCH_CONFIRM_FRAMES) {
+        state.isPinching = true;
+        state.pinchFrames = 0;
+        this.emit({
+          type: 'pinch-start',
+          handIndex,
+          position: smoothed,
+          confidence,
+          isPinching: true,
+          orientation,
+          pose,
+          fingerCount,
+          gesture,
+          timestamp: performance.now(),
+        });
+      }
+    } else if (!state.isPinching) {
+      state.pinchFrames = 0;
+    }
+
+    if (state.isPinching && pinchDistance > PINCH_RELEASE_THRESHOLD) {
       state.isPinching = false;
+      state.pinchFrames = 0;
       this.emit({
         type: 'pinch-end',
         handIndex,
