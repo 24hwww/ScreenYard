@@ -18,6 +18,8 @@ interface WindowWrapperProps {
   onDragStart?: (id: string) => void;
   /** Called when mouse drag ends, with final position */
   onDragEnd?: (id: string, x: number, y: number) => void;
+  /** Swipe-to-delete progress (0-1) for visual feedback */
+  swipeProgress?: number;
 }
 
 export const WindowWrapper: React.FC<WindowWrapperProps> = ({
@@ -31,6 +33,7 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
   onEditEnd,
   onDragStart,
   onDragEnd,
+  swipeProgress = 0,
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -137,7 +140,7 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
   return (
     <div
       ref={wrapperRef}
-      className={`window-wrapper ${win.selected ? 'window-wrapper--selected' : ''} ${win.locked ? 'window-wrapper--locked' : ''} ${isDragging ? 'window-wrapper--dragging' : ''}`}
+      className={`window-wrapper ${win.selected ? 'window-wrapper--selected' : ''} ${win.locked ? 'window-wrapper--locked' : ''} ${isDragging ? 'window-wrapper--dragging' : ''} ${swipeProgress > 0 ? 'window-wrapper--swiping' : ''}`}
       style={{
         left: win.position.x,
         top: win.position.y,
@@ -145,6 +148,12 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
         height: win.size.height,
         zIndex: win.zIndex,
         cursor: win.locked ? 'default' : isDragging ? 'grabbing' : 'grab',
+        opacity: 1 - swipeProgress * 0.6,
+        transform: `scale(${1 - swipeProgress * 0.15})`,
+        filter: swipeProgress > 0 ? `hue-rotate(${swipeProgress * -60}deg) brightness(${1 + swipeProgress * 0.3})` : undefined,
+        boxShadow: swipeProgress > 0
+          ? `0 0 ${swipeProgress * 30}px rgba(239, 68, 68, ${swipeProgress * 0.8})`
+          : undefined,
       }}
       onMouseDown={handleMouseDown}
     >

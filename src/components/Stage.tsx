@@ -380,7 +380,22 @@ export const Stage: React.FC<StageProps> = ({
 
   // ─── Gesture events → actions ───
   // Track drag state per hand so both hands can interact independently
-  const gestureDragStateRef = useRef<Map<number, { windowId: string; offset: { x: number; y: number } }>>(new Map());
+  const gestureDragStateRef = useRef<Map<number, {
+    windowId: string;
+    offset: { x: number; y: number };
+    startX: number;
+    startY: number;
+    startTime: number;
+  }>>(new Map());
+
+  // Swipe-to-delete thresholds
+  const SWIPE_MIN_DISTANCE = 200; // px — minimum horizontal travel
+  const SWIPE_RATIO = 2; // horizontal distance must be 2x vertical
+  const SWIPE_MAX_TIME = 800; // ms — must be a quick swipe, not a slow drag
+
+  // Track swipe progress for visual feedback (0-1)
+  const [swipeProgress, setSwipeProgress] = useState(0);
+  const [swipingWindowId, setSwipingWindowId] = useState<string | null>(null);
 
   useEffect(() => {
     const handleGestureEvent = (event: GestureEvent) => {
@@ -408,6 +423,18 @@ export const Stage: React.FC<StageProps> = ({
               : { x: newX, y: newY };
             onStateChange(moveWindow(state, dragState.windowId, clamped));
             if (win) setTrashProgress(calculateTrashOverlap(clamped.x, clamped.y, win.size.width, win.size.height));
+
+            // Track swipe progress for visual feedback
+            const dx = Math.abs(stageX - dragState.startX);
+            const dy = Math.abs(stageY - dragState.startY);
+            if (dx > dy * SWIPE_RATIO && dx > 50) {
+              const progress = Math.min(1, dx / SWIPE_MIN_DISTANCE);
+              setSwipeProgress(progress);
+              setSwipingWindowId(dragState.windowId);
+            } else {
+              setSwipeProgress(0);
+              setSwipingWindowId(null);
+            }
           }
           break;
         }
@@ -421,9 +448,10 @@ export const Stage: React.FC<StageProps> = ({
               gestureDragStateRef.current.set(handIdx, {
                 windowId: win.id,
                 offset: { x: stageX - win.position.x, y: stageY - win.position.y },
+                startX: stageX,
+                startY: stageY,
+                startTime: performance.now(),
               });
-              // Also set the legacy drag state for the primary hand (handIndex 0)
-              // so mouse-based drag tracking stays compatible
               if (handIdx === 0) {
                 setDraggingWindowId(win.id);
                 setDragSource('gesture');
@@ -443,21 +471,36 @@ export const Stage: React.FC<StageProps> = ({
           if (dragState) {
             const win = state.windows.find((w) => w.id === dragState.windowId);
             if (win) {
-              const overlap = calculateTrashOverlap(win.position.x, win.position.y, win.size.width, win.size.height);
-              if (overlap > 0.5) onStateChange(removeWindow(state, dragState.windowId));
+              // Check for horizontal swipe-to-delete
+              const dx = Math.abs(stageX - dragState.startX);
+              const dy = Math.abs(stageY - dragState.startY);
+              const elapsed = performance.now() - dragState.startTime;
+              const isHorizontalSwipe =
+                dx > SWIPE_MIN_DISTANCE &&
+                dx > dy * SWIPE_RATIO &&
+                elapsed < SWIPE_MAX_TIME;
+
+              if (isHorizontalSwipe) {
+                // Swipe detected — remove the element
+                onStateChange(removeWindow(state, dragState.windowId));
+              } else {
+                // Normal drop — check trash zone overlap
+                const overlap = calculateTrashOverlap(win.position.x, win.position.y, win.size.width, win.size.height);
+                if (overlap > 0.5) onStateChange(removeWindow(state, dragState.windowId));
+              }
             }
             gestureDragStateRef.current.delete(handIdx);
           }
-          // Clear legacy drag state if primary hand
           if (handIdx === 0) {
             setDraggingWindowId(null);
             setDragSource(null);
           }
-          // Hide trash if no hands are dragging
           if (gestureDragStateRef.current.size === 0) {
             setTrashVisible(false);
             setTrashProgress(0);
           }
+          setSwipeProgress(0);
+          setSwipingWindowId(null);
           break;
         }
 
@@ -580,6 +623,7 @@ export const Stage: React.FC<StageProps> = ({
             onEditEnd={handleEditEnd}
             onDragStart={handleMouseDragStart}
             onDragEnd={handleMouseDragEnd}
+            swipeProgress={swipingWindowId === win.id ? swipeProgress : 0}
           />
         ))}
       </div>
