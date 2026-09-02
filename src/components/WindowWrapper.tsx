@@ -25,6 +25,10 @@ interface WindowWrapperProps {
   swipeProgress?: number;
   /** Whether this element is currently being pinched (grabbed by gesture) */
   isPinched?: boolean;
+  /** Pinch cursor position in stage coordinates (0-1 normalized), null if no hand */
+  pinchCursor?: { x: number; y: number } | null;
+  /** Pinch proximity 0-1 (how close fingers are to pinching) */
+  pinchProximity?: number;
 }
 
 export const WindowWrapper: React.FC<WindowWrapperProps> = ({
@@ -40,6 +44,8 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
   onDragEnd,
   swipeProgress = 0,
   isPinched = false,
+  pinchCursor = null,
+  pinchProximity = 0,
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -49,6 +55,7 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
   const dragStart = useRef({ x: 0, y: 0, winX: 0, winY: 0 });
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
   const wasPinchedRef = useRef(false);
+  const magneticTweenRef = useRef<gsap.core.Tween | null>(null);
 
   // ─── GSAP paper crumple effect on pinch ───
   useEffect(() => {
@@ -58,6 +65,11 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
     if (isPinched && !wasPinchedRef.current) {
       // Pinch started → dramatic crumple effect
       wasPinchedRef.current = true;
+      // Kill any magnetic tween
+      if (magneticTweenRef.current) {
+        magneticTweenRef.current.kill();
+        magneticTweenRef.current = null;
+      }
       gsap.killTweensOf(inner);
       gsap.to(inner, {
         scale: 0.85,
@@ -68,6 +80,8 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
         duration: 0.25,
         ease: 'power3.out',
         boxShadow: '0 20px 60px rgba(0,0,0,0.6), inset 0 0 30px rgba(0,0,0,0.2)',
+        x: 0,
+        y: 0,
       });
       // Wobble for paper-like feel
       gsap.to(inner, {
@@ -88,12 +102,92 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
         skewX: 0,
         skewY: 0,
         borderRadius: '0px',
+        x: 0,
+        y: 0,
         duration: 0.6,
         ease: 'elastic.out(1, 0.4)',
         boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
       });
     }
   }, [isPinched]);
+
+  // ─── GSAP magnetic effect: attract element toward pinch cursor ───
+  // When the pinch cursor is near this element (but not yet pinching),
+  // the element subtly pulls toward the cursor like a magnet.
+  useEffect(() => {
+    if (isPinched || win.locked) {
+      // Reset magnetic offset when pinched or locked
+      if (magneticTweenRef.current) {
+        magneticTweenRef.current.kill();
+        magneticTweenRef.current = null;
+      }
+      if (!wasPinchedRef.current && innerRef.current) {
+        gsap.to(innerRef.current, { x: 0, y: 0, duration: 0.3, ease: 'power2.out' });
+      }
+      return;
+    }
+
+    const wrapper = wrapperRef.current;
+    const inner = innerRef.current;
+    if (!wrapper || !inner || !pinchCursor) {
+      // No cursor → reset
+      if (magneticTweenRef.current) {
+        magneticTweenRef.current.kill();
+        magneticTweenRef.current = null;
+      }
+      gsap.to(inner, { x: 0, y: 0, duration: 0.4, ease: 'power2.out' });
+      return;
+    }
+
+    // Get element center in screen coordinates
+    const rect = wrapper.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    // Pinch cursor in screen coordinates (normalized 0-1 → screen)
+    const stage = wrapper.closest('.stage');
+    if (!stage) return;
+    const stageRect = stage.getBoundingClientRect();
+    const cursorX = stageRect.left + pinchCursor.x * stageRect.width;
+    const cursorY = stageRect.top + pinchCursor.y * stageRect.height;
+
+    // Distance from cursor to element center
+    const dx = cursorX - cx;
+    const dy = cursorY - cy;
+    const dist = Math.hypot(dx, dy);
+
+    // Magnetic range: 150px. Only attract when within range.
+    const MAGNETIC_RANGE = 150;
+    if (dist > MAGNETIC_RANGE) {
+      // Out of range → reset position
+      if (magneticTweenRef.current) {
+        magneticTweenRef.current.kill();
+        magneticTweenRef.current = null;
+      }
+      gsap.to(inner, { x: 0, y: 0, duration: 0.4, ease: 'power2.out' });
+      return;
+    }
+
+    // Magnetic strength: closer = stronger pull
+    // Max pull: 20px toward cursor. Scale by proximity (pinch closeness).
+    const proximityFactor = Math.max(pinchProximity, 0.3); // min 0.3 so hover also attracts
+    const strength = (1 - dist / MAGNETIC_RANGE) * 20 * proximityFactor;
+    const angle = Math.atan2(dy, dx);
+    const targetX = Math.cos(angle) * strength;
+    const targetY = Math.sin(angle) * strength;
+
+    // Kill previous tween and animate to new magnetic position
+    if (magneticTweenRef.current) {
+      magneticTweenRef.current.kill();
+    }
+    magneticTweenRef.current = gsap.to(inner, {
+      x: targetX,
+      y: targetY,
+      duration: 0.2,
+      ease: 'power2.out',
+      overwrite: 'auto',
+    });
+  }, [pinchCursor, pinchProximity, isPinched, win.locked, win.position.x, win.position.y]);
 
   // Mouse drag
   const handleMouseDown = useCallback(

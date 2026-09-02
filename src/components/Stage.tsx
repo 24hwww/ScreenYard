@@ -711,6 +711,8 @@ export const Stage: React.FC<StageProps> = ({
               onDragEnd={handleMouseDragEnd}
               swipeProgress={swipingWindowId === win.id ? swipeProgress : 0}
               isPinched={draggingWindowId === win.id && dragSource === 'gesture'}
+              pinchCursor={gestureState.handDetected ? gestureState.indexPosition : null}
+              pinchProximity={Math.max(0, Math.min(1, 1 - (gestureState.pinchDistance - 0.55) / 0.35))}
             />
           ))}
         </AnimatePresence>
