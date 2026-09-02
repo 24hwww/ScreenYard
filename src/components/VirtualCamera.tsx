@@ -254,46 +254,55 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           }
         };
 
-        // Create offer and send to caller via background
+        // Create offer and send to caller via background (async — answer comes separately)
         pc.createOffer()
           .then((offer) => pc.setLocalDescription(offer))
           .then(() => {
-            // Send offer to background, which relays to content script, gets answer, returns it
-            chrome.runtime.sendMessage(
-              {
+            // Send offer to background — background relays to content script
+            // Answer will come back as a separate "content-webrtc-answer" message
+            try {
+              chrome.runtime.sendMessage({
                 type: 'screenyard-webrtc-offer',
                 callerTabId,
                 sdp: pc.localDescription?.sdp,
-              },
-              (response) => {
-                if (response?.answer) {
-                  pc.setRemoteDescription({ type: 'answer', sdp: response.answer })
-                    .then(() => {
-                      setConnectedCalls(peerConnectionsRef.current.size);
-                    })
-                    .catch((err) => console.warn('[ScreenYard VCam] setRemoteDescription failed:', err));
-                } else if (response?.error) {
-                  console.warn('[ScreenYard VCam] Offer rejected:', response.error);
-                }
-              },
-            );
+              });
+            } catch (err) {
+              console.warn('[ScreenYard VCam] Failed to send offer:', err);
+            }
           })
           .catch((err) => {
             console.warn('[ScreenYard VCam] createOffer failed:', err);
-            sendResponse({ error: err.message });
           });
 
         sendResponse({ ok: true });
       }
 
-      // ICE candidate from content script (caller)
-      if (message.type === 'content-ice-candidate') {
-        // Find the PC for this caller — we only have one caller typically
+      // WebRTC answer from content script (caller) — relayed by background
+      if (message.type === 'content-webrtc-answer') {
+        const answer = message.answer;
+        // Find the PC that's waiting for an answer (typically only one)
         peerConnectionsRef.current.forEach((pc) => {
-          if (message.candidate) {
-            pc.addIceCandidate({ candidate: message.candidate }).catch(() => {});
+          if (pc.connectionState === 'connecting' || pc.remoteDescription === null) {
+            pc.setRemoteDescription({ type: 'answer', sdp: answer })
+              .then(() => {
+                setConnectedCalls(peerConnectionsRef.current.size);
+                console.log('[ScreenYard VCam] WebRTC connection established');
+              })
+              .catch((err) => console.warn('[ScreenYard VCam] setRemoteDescription failed:', err));
           }
         });
+      }
+
+      // ICE candidates from content script (caller)
+      if (message.type === 'content-ice-candidate') {
+        const candidates = message.candidates;
+        if (Array.isArray(candidates)) {
+          peerConnectionsRef.current.forEach((pc) => {
+            candidates.forEach((c: string) => {
+              pc.addIceCandidate({ candidate: c }).catch(() => {});
+            });
+          });
+        }
       }
     };
 

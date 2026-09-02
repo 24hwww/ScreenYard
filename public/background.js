@@ -5,22 +5,24 @@
  * - ScreenYard tab (the app with the canvas stream)
  * - Video call tabs (Meet, Zoom, Teams, etc. with the content script)
  *
- * When a video call tab requests the ScreenYard stream:
- * 1. Content script sends "screenyard-request-stream"
- * 2. Background forwards to ScreenYard tab
- * 3. ScreenYard creates RTCPeerConnection, adds canvas track, creates offer
- * 4. Background relays offer to content script
- * 5. Content script creates answer
- * 6. Background relays answer back to ScreenYard
- * 7. ICE candidates exchanged bidirectionally
- * 8. Stream flows from ScreenYard → content script → getUserMedia → video call
+ * Message flow:
+ * 1. Content script → "screenyard-request-stream" → background
+ * 2. Background → "screenyard-start-webrtc" → ScreenYard tab
+ * 3. ScreenYard creates RTCPeerConnection, sends offer
+ * 4. ScreenYard → "screenyard-webrtc-offer" → background
+ * 5. Background → "screenyard-webrtc-offer" → content script (caller tab)
+ * 6. Content script creates answer, sends it back
+ * 7. Content script → "content-webrtc-answer" → background
+ * 8. Background → "content-webrtc-answer" → ScreenYard tab
+ * 9. ICE candidates exchanged bidirectionally
+ * 10. Stream flows from ScreenYard → content script → getUserMedia → video call
  */
 
 // Track the ScreenYard tab
 let screenyardTabId = null;
 
-// Track pending stream requests from video call tabs
-const pendingRequests = new Map(); // tabId → resolver
+// Track which caller tab is waiting for an offer response
+let pendingCallerTabId = null;
 
 // Open ScreenYard when extension icon is clicked
 chrome.action.onClicked.addListener(() => {
@@ -78,7 +80,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // ─── From ScreenYard tab: stream is ready ───
   if (message.type === 'screenyard-stream-ready') {
-    // Notify all video call tabs that the stream is available
     chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
         if (tab.url && isVideoCallUrl(tab.url)) {
@@ -90,51 +91,83 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // ─── From ScreenYard tab: stream stopped ───
+  if (message.type === 'screenyard-stream-stopped') {
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.url && isVideoCallUrl(tab.url)) {
+          chrome.tabs.sendMessage(tab.id, { type: 'screenyard-disconnected' }).catch(() => {});
+        }
+      }
+    });
+    return false;
+  }
+
   // ─── From content script (video call tab): request stream ───
   if (message.type === 'screenyard-request-stream') {
     if (!screenyardTabId) {
       sendResponse({ error: 'ScreenYard tab is not open. Click the extension icon to open it.' });
       return false;
     }
-    // Forward request to ScreenYard tab
+    pendingCallerTabId = sender.tab?.id;
+    // Forward request to ScreenYard tab — it will create an offer and send it back
     chrome.tabs.sendMessage(screenyardTabId, {
       type: 'screenyard-start-webrtc',
       callerTabId: sender.tab?.id,
     }, (response) => {
-      sendResponse(response);
+      if (chrome.runtime.lastError) {
+        sendResponse({ error: 'ScreenYard tab is not responding: ' + chrome.runtime.lastError.message });
+      } else {
+        sendResponse(response);
+      }
     });
     return true; // async
   }
 
   // ─── From ScreenYard tab: WebRTC offer for a specific caller ───
   if (message.type === 'screenyard-webrtc-offer') {
-    const callerTabId = message.callerTabId;
-    chrome.tabs.sendMessage(callerTabId, {
-      type: 'screenyard-webrtc-offer',
-      sdp: message.sdp,
-    }, (response) => {
-      // Relay the answer back to ScreenYard
-      sendResponse(response);
-    });
-    return true; // async
+    const callerTabId = message.callerTabId || pendingCallerTabId;
+    if (callerTabId) {
+      chrome.tabs.sendMessage(callerTabId, {
+        type: 'screenyard-webrtc-offer',
+        sdp: message.sdp,
+      }).catch(() => {
+        console.warn('[ScreenYard BG] Failed to send offer to caller tab', callerTabId);
+      });
+    }
+    sendResponse({ ok: true });
+    return false;
   }
 
   // ─── From ScreenYard tab: ICE candidate for caller ───
   if (message.type === 'screenyard-ice-candidate') {
-    const callerTabId = message.callerTabId;
-    chrome.tabs.sendMessage(callerTabId, {
-      type: 'screenyard-ice-candidate',
-      candidate: message.candidate,
-    }).catch(() => {});
+    const callerTabId = message.callerTabId || pendingCallerTabId;
+    if (callerTabId) {
+      chrome.tabs.sendMessage(callerTabId, {
+        type: 'screenyard-ice-candidate',
+        candidate: message.candidate,
+      }).catch(() => {});
+    }
     return false;
   }
 
-  // ─── From content script: ICE candidate for ScreenYard ───
+  // ─── From content script: WebRTC answer for ScreenYard ───
+  if (message.type === 'content-webrtc-answer') {
+    if (screenyardTabId) {
+      chrome.tabs.sendMessage(screenyardTabId, {
+        type: 'content-webrtc-answer',
+        answer: message.answer,
+      }).catch(() => {});
+    }
+    return false;
+  }
+
+  // ─── From content script: ICE candidates for ScreenYard ───
   if (message.type === 'content-ice-candidate') {
     if (screenyardTabId) {
       chrome.tabs.sendMessage(screenyardTabId, {
         type: 'content-ice-candidate',
-        candidate: message.candidate,
+        candidates: message.candidates,
       }).catch(() => {});
     }
     return false;

@@ -33,6 +33,10 @@ console.log('  ✓ background.js');
 copyFileSync(join(PUBLIC, 'content_script.js'), join(DIST, 'content_script.js'));
 console.log('  ✓ content_script.js');
 
+// Copy injected.js (MAIN world script, injected by content_script.js)
+copyFileSync(join(PUBLIC, 'injected.js'), join(DIST, 'injected.js'));
+console.log('  ✓ injected.js');
+
 // Copy icons
 const iconsSrc = join(PUBLIC, 'icons');
 const iconsDist = join(DIST, 'icons');
