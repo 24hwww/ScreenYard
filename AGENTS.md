@@ -64,7 +64,7 @@ src/
 │   ├── types.ts            # Tipos: GestureEvent, GestureState, HandOrientation...
 │   ├── HandTracker.ts      # Wrapper de MediaPipe HandLandmarker (hasta 2 manos)
 │   ├── GestureRecognizer.ts# Convierte landmarks en eventos (pinch, finger-count...)
-│   ├── GestureSmoother.ts  # Suavizado EMA con predicción de velocidad
+│   ├── GestureSmoother.ts  # One Euro Filter para suavizado adaptativo de puntero
 │   └── __tests__/          # Tests de GestureRecognizer, GestureSmoother, coords
 ├── windows/
 │   ├── types.ts            # Tipos: WindowData, WindowType, TextData, ImageData...
@@ -126,10 +126,38 @@ scripts/
 
 - Tests en `__tests__/` adyacentes al código que testean.
 - Entorno jsdom; setup en `src/test/setup.ts` (jest-dom matchers).
-- 39 tests actuales cubren: WindowManager (14), WindowModel (5),
-  GestureRecognizer (8), GestureSmoother (7), coordinateConversion (5).
+- 40 tests actuales cubren: WindowManager (14), WindowModel (5),
+  GestureRecognizer (8), GestureSmoother (8), coordinateConversion (5).
 - **Sin cobertura**: componentes de UI (Stage, WindowWrapper, TextWindow...),
   HandTracker (requiere MediaPipe + cámara).
+
+## Pipeline de reconocimiento de gestos
+
+```
+getUserMedia → <video> oculto → MediaPipe HandLandmarker
+  → landmarks 3D → HandTracker (geometría 3D, ángulos, handSize)
+  → GestureRecognizer (pinch normalizado, finger-count, gesture-detected)
+  → GestureSmoother (One Euro Filter adaptativo)
+  → GestureEvent → Stage.tsx → acciones (drag, edit, emoji)
+```
+
+### Mejoras de precisión implementadas
+
+- **One Euro Filter** (`GestureSmoother.ts`): suavizado adaptativo que reduce
+  jitter a baja velocidad y lag a alta velocidad. Reemplaza el EMA fijo.
+- **Pinch normalizado por tamaño de mano**: `normalizedPinch = pinchDist / handSize`
+  donde `handSize = dist3D(wrist, middle_mcp)`. Thresholds unitless (0.45/0.60).
+- **Finger counting con ángulos 3D**: usa `angle3D(MCP, PIP, DIP) > 160°` en
+  lugar de comparar coordenadas Y. Robusto a rotación y ángulo de cámara.
+- **Filtrado por confianza**: detecciones con `visibility < 0.5` se descartan.
+- **requestVideoFrameCallback**: sincroniza la inferencia con los frames reales
+  de la webcam (más eficiente que `requestAnimationFrame`). Fallback automático.
+- **Fallback GPU→CPU**: si la inicialización con `delegate: 'GPU'` falla,
+  reintenta con `delegate: 'CPU'`.
+- **Hold delay de 600ms para 1-finger**: el gesto de 1 dedo requiere sostenerse
+  600ms para activar edición de texto, con anillo de progreso SVG visible.
+
+Ver `docs/gesture-precision-audit.md` para el análisis completo.
 
 ## Notas importantes
 

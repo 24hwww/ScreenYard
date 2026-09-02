@@ -7,6 +7,8 @@ interface VirtualCursorProps {
   isPinching: boolean;
   /** 0 = primary, 1 = secondary hand */
   handIndex?: number;
+  /** 0-1 hold progress for 1-finger text activation (primary hand only) */
+  holdProgress?: number;
 }
 
 /**
@@ -18,10 +20,12 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
   visible,
   isPinching,
   handIndex = 0,
+  holdProgress = 0,
 }) => {
   if (!visible) return null;
 
   const isSecondary = handIndex === 1;
+  const showHoldRing = holdProgress > 0 && holdProgress < 1 && !isSecondary;
 
   return (
     <div
@@ -31,6 +35,44 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
         top: `${position.y * 100}%`,
       }}
     >
+      {/* Hold progress ring (SVG) */}
+      {showHoldRing && (
+        <svg
+          className="virtual-cursor-hold-ring"
+          width="44"
+          height="44"
+          viewBox="0 0 44 44"
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            pointerEvents: 'none',
+          }}
+        >
+          <circle
+            cx="22"
+            cy="22"
+            r="20"
+            fill="none"
+            stroke="rgba(255,255,255,0.15)"
+            strokeWidth="3"
+          />
+          <circle
+            cx="22"
+            cy="22"
+            r="20"
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={`${2 * Math.PI * 20}`}
+            strokeDashoffset={`${2 * Math.PI * 20 * (1 - holdProgress)}`}
+            transform="rotate(-90 22 22)"
+            style={{ transition: 'stroke-dashoffset 0.05s linear' }}
+          />
+        </svg>
+      )}
       {/* Outer ring */}
       <div
         className={`virtual-cursor-ring ${isPinching ? 'virtual-cursor-ring--pinching' : ''}`}

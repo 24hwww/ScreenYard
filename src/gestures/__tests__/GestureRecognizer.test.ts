@@ -9,7 +9,14 @@ function makeHandResult(
   thumbX: number,
   thumbY: number,
   confidence = 0.9,
+  normalizedPinchDistance?: number,
 ): HandLandmarkResult {
+  // If normalizedPinchDistance not provided, compute from raw 2D distance
+  // assuming a typical handSize of ~0.15 (wrist to middle_mcp in normalized units)
+  const rawDist = Math.sqrt((indexX - thumbX) ** 2 + (indexY - thumbY) ** 2);
+  const handSize = 0.15;
+  const npd = normalizedPinchDistance ?? (rawDist / handSize);
+
   return {
     landmarks: [],
     landmarks3D: [],
@@ -21,6 +28,8 @@ function makeHandResult(
     pose: 'unknown' as const,
     fingerCount: 5,
     gesture: 'none' as const,
+    handSize,
+    normalizedPinchDistance: npd,
   };
 }
 

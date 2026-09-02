@@ -30,9 +30,18 @@ export const TextWindow: React.FC<TextWindowProps> = ({
   const editing = externalEditing ?? internalEditing;
 
   useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+    if (editing) {
+      // Use rAF to ensure the textarea is committed to the DOM before focusing
+      const raf = requestAnimationFrame(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.select();
+          // Place cursor at end for easier appending
+          const len = inputRef.current.value.length;
+          inputRef.current.setSelectionRange(len, len);
+        }
+      });
+      return () => cancelAnimationFrame(raf);
     }
   }, [editing]);
 

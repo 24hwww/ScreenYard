@@ -104,6 +104,12 @@ export const Stage: React.FC<StageProps> = ({
   // Track last 1-finger state to avoid repeated triggers
   const lastFingerCountRef = useRef(0);
 
+  // 1-finger hold timer for text editing activation
+  const oneFingerHoldTimerRef = useRef<number | null>(null);
+  const [oneFingerHoldProgress, setOneFingerHoldProgress] = useState(0);
+  const oneFingerHoldStartRef = useRef<{ x: number; y: number } | null>(null);
+  const ONE_FINGER_HOLD_MS = 600;
+
   // Spawn an emoji at a position
   const spawnEmoji = useCallback((emoji: string, x: number, y: number) => {
     const id = `emoji-${++emojiIdRef.current}`;
@@ -318,15 +324,48 @@ export const Stage: React.FC<StageProps> = ({
         }
 
         case 'finger-count': {
-          // 1 finger → open nearest text element for editing
-          if (event.fingerCount === 1 && lastFingerCountRef.current !== 1) {
-            const nearestTextId = findNearestText(state.windows, stageX, stageY);
-            if (nearestTextId) {
-              onStateChange(setEditing(state, nearestTextId, true));
-              onStateChange(selectWindow(state, nearestTextId));
-            }
+          const prevCount = lastFingerCountRef.current;
+          const newCount = event.fingerCount;
+
+          // Cancel any pending hold timer when finger count changes
+          if (oneFingerHoldTimerRef.current !== null) {
+            clearTimeout(oneFingerHoldTimerRef.current);
+            oneFingerHoldTimerRef.current = null;
           }
-          lastFingerCountRef.current = event.fingerCount;
+
+          // 1 finger → start hold timer to open nearest text element for editing
+          if (newCount === 1 && prevCount !== 1) {
+            oneFingerHoldStartRef.current = { x: stageX, y: stageY };
+            setOneFingerHoldProgress(0);
+
+            // Animate progress
+            const startTime = performance.now();
+            const animateProgress = () => {
+              const elapsed = performance.now() - startTime;
+              const progress = Math.min(elapsed / ONE_FINGER_HOLD_MS, 1);
+              setOneFingerHoldProgress(progress);
+              if (progress < 1 && oneFingerHoldTimerRef.current !== null) {
+                requestAnimationFrame(animateProgress);
+              }
+            };
+            requestAnimationFrame(animateProgress);
+
+            oneFingerHoldTimerRef.current = window.setTimeout(() => {
+              const startPos = oneFingerHoldStartRef.current;
+              if (!startPos) return;
+              const nearestTextId = findNearestText(state.windows, startPos.x, startPos.y);
+              if (nearestTextId) {
+                onStateChange(selectWindow(setEditing(state, nearestTextId, true), nearestTextId));
+              }
+              oneFingerHoldTimerRef.current = null;
+              setOneFingerHoldProgress(0);
+            }, ONE_FINGER_HOLD_MS);
+          } else if (newCount !== 1) {
+            setOneFingerHoldProgress(0);
+            oneFingerHoldStartRef.current = null;
+          }
+
+          lastFingerCountRef.current = newCount;
           break;
         }
 
@@ -400,6 +439,7 @@ export const Stage: React.FC<StageProps> = ({
         visible={gestureState.handDetected}
         isPinching={gestureState.isPinching}
         handIndex={0}
+        holdProgress={oneFingerHoldProgress}
       />
       {gestureState.secondHand && (
         <VirtualCursor

@@ -14,6 +14,10 @@ export interface HandLandmarkResult {
   fingerCount: number;
   /** Recognized gesture */
   gesture: RecognizedGesture;
+  /** Hand size (wrist→middle_mcp distance in normalized units) */
+  handSize: number;
+  /** Pinch distance normalized by hand size (unitless, ~0.3-1.5) */
+  normalizedPinchDistance: number;
 }
 
 /** Callback receives an array of all detected hands per frame */
@@ -35,18 +39,56 @@ const THUMB_IP = 3;
 const THUMB_TIP = 4;
 const INDEX_MCP = 5;
 const INDEX_PIP = 6;
+const INDEX_DIP = 7;
 const INDEX_TIP = 8;
 const MIDDLE_MCP = 9;
 const MIDDLE_PIP = 10;
+const MIDDLE_DIP = 11;
 const MIDDLE_TIP = 12;
 const RING_MCP = 13;
 const RING_PIP = 14;
+const RING_DIP = 15;
 const RING_TIP = 16;
 const PINKY_MCP = 17;
 const PINKY_PIP = 18;
+const PINKY_DIP = 19;
 const PINKY_TIP = 20;
 
 type Point3D = { x: number; y: number; z: number };
+
+// ─── 3D Geometry Helpers ───
+
+function dist3D(a: Point3D, b: Point3D): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+}
+
+function dist2D(a: Point3D, b: Point3D): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+/**
+ * Angle at vertex B formed by points A-B-C, in degrees (0-180).
+ * Uses 3D coordinates for robustness against hand rotation.
+ */
+function angle3D(a: Point3D, b: Point3D, c: Point3D): number {
+  const ba = { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+  const bc = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+  const dot = ba.x * bc.x + ba.y * bc.y + ba.z * bc.z;
+  const magBA = Math.sqrt(ba.x ** 2 + ba.y ** 2 + ba.z ** 2);
+  const magBC = Math.sqrt(bc.x ** 2 + bc.y ** 2 + bc.z ** 2);
+  if (magBA === 0 || magBC === 0) return 180;
+  const cos = Math.max(-1, Math.min(1, dot / (magBA * magBC)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+/**
+ * Compute hand size as the distance from wrist to middle MCP.
+ * This is a stable reference for normalizing measurements across
+ * different hand distances from the camera.
+ */
+function computeHandSize(landmarks3D: Point3D[]): number {
+  return dist3D(landmarks3D[WRIST], landmarks3D[MIDDLE_MCP]);
+}
 
 /**
  * Wraps MediaPipe HandLandmarker for hand detection.
@@ -58,11 +100,18 @@ export class HandTracker {
   private handLandmarker: any | null = null;
   private videoElement: HTMLVideoElement | null = null;
   private animationFrameId: number | null = null;
+  private videoFrameCallbackId: number | null = null;
   private callback: HandTrackerCallback | null = null;
   private running = false;
 
   /** Mirror X to make interaction feel natural (like a mirror) */
   private mirrorX = true;
+
+  /** Minimum confidence to accept a hand detection (0-1) */
+  private minConfidence = 0.5;
+
+  /** Whether the browser supports requestVideoFrameCallback */
+  private useVideoFrameCallback = false;
 
   async initialize(
     videoElement: HTMLVideoElement,
@@ -70,6 +119,11 @@ export class HandTracker {
     _stageHeight: number,
   ): Promise<void> {
     this.videoElement = videoElement;
+
+    // Check if requestVideoFrameCallback is available (more efficient than rAF
+    // for video processing — only fires when a new frame is ready)
+    this.useVideoFrameCallback =
+      typeof (videoElement as any).requestVideoFrameCallback === 'function';
 
     const { HandLandmarker, FilesetResolver } = await import(
       '@mediapipe/tasks-vision'
@@ -79,18 +133,36 @@ export class HandTracker {
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm',
     );
 
-    this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
+    // Try GPU first, fall back to CPU if GPU delegate fails
+    // (not all browsers/devices support WebGPU or GPU-accelerated inference)
+    try {
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          delegate: 'GPU',
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+    } catch (gpuErr) {
+      console.warn('GPU delegate failed, falling back to CPU:', gpuErr);
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          delegate: 'CPU',
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+    }
   }
 
   start(callback: HandTrackerCallback): void {
@@ -105,6 +177,10 @@ export class HandTracker {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
+    }
+    if (this.videoFrameCallbackId !== null && this.videoElement) {
+      (this.videoElement as any).cancelVideoFrameCallback?.(this.videoFrameCallbackId);
+      this.videoFrameCallbackId = null;
     }
     this.callback = null;
   }
@@ -126,7 +202,7 @@ export class HandTracker {
 
   // ─── Pose Detection ───
 
-  private detectPose(landmarks3D: Point3D[]): HandPose {
+  private detectPose(landmarks3D: Point3D[], handSize: number): HandPose {
     const wrist = landmarks3D[WRIST];
     const middleMcp = landmarks3D[MIDDLE_MCP];
     const palmCenter: Point3D = {
@@ -134,9 +210,6 @@ export class HandTracker {
       y: (wrist.y + middleMcp.y) / 2,
       z: (wrist.z + middleMcp.z) / 2,
     };
-
-    const dist3D = (a: Point3D, b: Point3D) =>
-      Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
 
     const tipDistances = [
       dist3D(landmarks3D[INDEX_TIP], palmCenter),
@@ -146,16 +219,20 @@ export class HandTracker {
     ];
 
     const avgTipDist = tipDistances.reduce((a, b) => a + b, 0) / tipDistances.length;
+    // Normalize by hand size for robustness across distances
     const thumbIndexDist = dist3D(landmarks3D[THUMB_TIP], landmarks3D[INDEX_TIP]);
+    const normalizedThumbIndex = thumbIndexDist / handSize;
 
-    if (thumbIndexDist < 0.06) return 'pinch';
-    if (avgTipDist < 0.10) return 'fist';
+    // Pinch: normalized distance small (works regardless of hand distance from camera)
+    if (normalizedThumbIndex < 0.35) return 'pinch';
+    // Fist: all fingertips close to palm center (normalized)
+    if (avgTipDist / handSize < 0.6) return 'fist';
 
-    const indexExtended = tipDistances[0] > 0.15;
-    const othersCurled = tipDistances[1] < 0.12 && tipDistances[2] < 0.12 && tipDistances[3] < 0.12;
+    const indexExtended = tipDistances[0] / handSize > 0.9;
+    const othersCurled = tipDistances[1] / handSize < 0.7 && tipDistances[2] / handSize < 0.7 && tipDistances[3] / handSize < 0.7;
     if (indexExtended && othersCurled) return 'point';
 
-    if (avgTipDist > 0.14) return 'open';
+    if (avgTipDist / handSize > 0.85) return 'open';
 
     return 'unknown';
   }
@@ -163,39 +240,47 @@ export class HandTracker {
   // ─── Finger Counting ───
 
   /**
-   * Count extended fingers (0-5).
+   * Count extended fingers (0-5) using 3D joint angles.
    *
-   * For thumb: check if tip is farther from palm center than the IP joint.
-   * For other fingers: check if tip y is above (less than) PIP y (finger extended).
-   * This works because in screen coords, y=0 is top.
+   * For each finger (index, middle, ring, pinky): compute the angle at the PIP
+   * joint (MCP-PIP-DIP). If the angle is > 160° the finger is extended; if
+   * < 110° it's curled. This is robust to hand rotation and camera angle,
+   * unlike pure y-coordinate comparison.
+   *
+   * For the thumb: use the angle at the IP joint (MCP-IP-TIP) plus a
+   * distance check from the palm center, since the thumb moves differently.
    */
-  private countFingers(landmarks3D: Point3D[]): number {
+  private countFingers(landmarks3D: Point3D[], handSize: number): number {
     let count = 0;
 
-    // Thumb: extended if tip is significantly to the side of IP joint
-    // (use x-axis distance from wrist for horizontal thumb extension)
-    const wrist = landmarks3D[WRIST];
-    const thumbTip = landmarks3D[THUMB_TIP];
-    const thumbIp = landmarks3D[THUMB_IP];
-    const thumbMcp = landmarks3D[THUMB_MCP];
+    // ── Thumb ──
+    // Use angle at IP joint + distance from palm center
+    const thumbAngle = angle3D(landmarks3D[THUMB_MCP], landmarks3D[THUMB_IP], landmarks3D[THUMB_TIP]);
+    const palmCenter: Point3D = {
+      x: (landmarks3D[WRIST].x + landmarks3D[MIDDLE_MCP].x) / 2,
+      y: (landmarks3D[WRIST].y + landmarks3D[MIDDLE_MCP].y) / 2,
+      z: (landmarks3D[WRIST].z + landmarks3D[MIDDLE_MCP].z) / 2,
+    };
+    const thumbTipDist = dist3D(landmarks3D[THUMB_TIP], palmCenter);
+    const thumbIpDist = dist3D(landmarks3D[THUMB_IP], palmCenter);
+    // Thumb is extended if: angle is relatively straight AND tip is farther from palm than IP
+    if (thumbAngle > 140 && thumbTipDist > thumbIpDist + handSize * 0.05) count++;
 
-    // Thumb extended: tip is farther from palm center than IP joint
-    const palmCenterX = (wrist.x + landmarks3D[MIDDLE_MCP].x) / 2;
-    const tipDistX = Math.abs(thumbTip.x - palmCenterX);
-    const ipDistX = Math.abs(thumbIp.x - palmCenterX);
-    if (tipDistX > ipDistX + 0.02) count++;
+    // ── Index ──
+    const indexAngle = angle3D(landmarks3D[INDEX_MCP], landmarks3D[INDEX_PIP], landmarks3D[INDEX_DIP]);
+    if (indexAngle > 160) count++;
 
-    // Index: tip above PIP (lower y value = higher on screen)
-    if (landmarks3D[INDEX_TIP].y < landmarks3D[INDEX_PIP].y) count++;
+    // ── Middle ──
+    const middleAngle = angle3D(landmarks3D[MIDDLE_MCP], landmarks3D[MIDDLE_PIP], landmarks3D[MIDDLE_DIP]);
+    if (middleAngle > 160) count++;
 
-    // Middle: tip above PIP
-    if (landmarks3D[MIDDLE_TIP].y < landmarks3D[MIDDLE_PIP].y) count++;
+    // ── Ring ──
+    const ringAngle = angle3D(landmarks3D[RING_MCP], landmarks3D[RING_PIP], landmarks3D[RING_DIP]);
+    if (ringAngle > 160) count++;
 
-    // Ring: tip above PIP
-    if (landmarks3D[RING_TIP].y < landmarks3D[RING_PIP].y) count++;
-
-    // Pinky: tip above PIP
-    if (landmarks3D[PINKY_TIP].y < landmarks3D[PINKY_PIP].y) count++;
+    // ── Pinky ──
+    const pinkyAngle = angle3D(landmarks3D[PINKY_MCP], landmarks3D[PINKY_PIP], landmarks3D[PINKY_DIP]);
+    if (pinkyAngle > 160) count++;
 
     return count;
   }
@@ -214,13 +299,22 @@ export class HandTracker {
     const thumbIp = landmarks3D[THUMB_IP];
     const wrist = landmarks3D[WRIST];
 
-    const indexExtended = landmarks3D[INDEX_TIP].y < landmarks3D[INDEX_PIP].y;
-    const middleExtended = landmarks3D[MIDDLE_TIP].y < landmarks3D[MIDDLE_PIP].y;
-    const ringExtended = landmarks3D[RING_TIP].y < landmarks3D[RING_PIP].y;
-    const pinkyExtended = landmarks3D[PINKY_TIP].y < landmarks3D[PINKY_PIP].y;
+    // Use 3D angles for finger extension detection
+    const indexAngle = angle3D(landmarks3D[INDEX_MCP], landmarks3D[INDEX_PIP], landmarks3D[INDEX_DIP]);
+    const middleAngle = angle3D(landmarks3D[MIDDLE_MCP], landmarks3D[MIDDLE_PIP], landmarks3D[MIDDLE_DIP]);
+    const ringAngle = angle3D(landmarks3D[RING_MCP], landmarks3D[RING_PIP], landmarks3D[RING_DIP]);
+    const pinkyAngle = angle3D(landmarks3D[PINKY_MCP], landmarks3D[PINKY_PIP], landmarks3D[PINKY_DIP]);
+
+    const indexExtended = indexAngle > 160;
+    const middleExtended = middleAngle > 160;
+    const ringExtended = ringAngle > 160;
+    const pinkyExtended = pinkyAngle > 160;
 
     // Thumb up: thumb extended upward, all other fingers curled
-    const thumbPointsUp = thumbTip.y < thumbIp.y - 0.03 && thumbTip.y < thumbMcp.y - 0.05;
+    // Use y-comparison for "up" direction (still needed for orientation)
+    // but add angle check for thumb straightness
+    const thumbAngle = angle3D(landmarks3D[THUMB_MCP], landmarks3D[THUMB_IP], landmarks3D[THUMB_TIP]);
+    const thumbPointsUp = thumbTip.y < thumbIp.y - 0.03 && thumbTip.y < thumbMcp.y - 0.05 && thumbAngle > 140;
     const othersCurled = !indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
 
     if (thumbPointsUp && othersCurled) {
@@ -249,9 +343,16 @@ export class HandTracker {
       const handResults: HandLandmarkResult[] = [];
 
       if (results.landmarks && results.landmarks.length > 0) {
+        // Use handedness data from MediaPipe if available for stable left/right
+        const handednesses = results.handednesses || results.handedness || [];
+
         for (let i = 0; i < results.landmarks.length; i++) {
           const hand = results.landmarks[i];
           const wrist = hand[0];
+
+          // Confidence filtering: skip low-confidence detections
+          const confidence = wrist.visibility ?? 0.8;
+          if (confidence < this.minConfidence) continue;
 
           const landmarks3D: Point3D[] = hand.map((l: any) => ({
             x: this.mirrorX ? 1 - l.x : l.x,
@@ -275,11 +376,15 @@ export class HandTracker {
           const indexTip: GesturePoint = { x: indexX, y: indexY };
           const thumbTip: GesturePoint = { x: thumbX, y: thumbY };
 
-          const confidence = wrist.visibility ?? 0.8;
+          const handSize = computeHandSize(landmarks3D);
           const orientation = this.detectOrientation(landmarks3D);
-          const pose = this.detectPose(landmarks3D);
-          const fingerCount = this.countFingers(landmarks3D);
+          const pose = this.detectPose(landmarks3D, handSize);
+          const fingerCount = this.countFingers(landmarks3D, handSize);
           const gesture = this.detectGesture(landmarks3D, fingerCount);
+
+          // Normalized pinch distance (by hand size)
+          const pinchDist2D = dist2D(landmarks3D[INDEX_TIP], landmarks3D[THUMB_TIP]);
+          const normalizedPinchDistance = handSize > 0 ? pinchDist2D / handSize : pinchDist2D;
 
           handResults.push({
             landmarks: landmarks3D.map((l) => ({ x: l.x, y: l.y })),
@@ -292,6 +397,8 @@ export class HandTracker {
             pose,
             fingerCount,
             gesture,
+            handSize,
+            normalizedPinchDistance,
           });
         }
       }
@@ -299,6 +406,14 @@ export class HandTracker {
       this.callback?.(handResults);
     }
 
-    this.animationFrameId = requestAnimationFrame(this.detect);
+    // Use requestVideoFrameCallback when available (fires only on new video frames,
+    // more efficient than rAF which fires on every display refresh)
+    if (this.useVideoFrameCallback && this.videoElement) {
+      this.videoFrameCallbackId = (this.videoElement as any).requestVideoFrameCallback(
+        this.detect,
+      );
+    } else {
+      this.animationFrameId = requestAnimationFrame(this.detect);
+    }
   };
 }

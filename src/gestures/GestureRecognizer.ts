@@ -7,9 +7,9 @@ import { GestureSmoother } from './GestureSmoother';
 
 export type GestureEventListener = (event: GestureEvent) => void;
 
-/** Distance threshold for pinch detection (in normalized 0-1 coordinates) */
-const PINCH_THRESHOLD = 0.07;
-const PINCH_RELEASE_THRESHOLD = 0.10;
+/** Normalized pinch thresholds (relative to hand size, unitless) */
+const PINCH_THRESHOLD = 0.45;
+const PINCH_RELEASE_THRESHOLD = 0.60;
 
 /** How many consecutive frames a gesture must be detected before emitting */
 const GESTURE_CONFIRM_FRAMES = 3;
@@ -111,6 +111,7 @@ export class GestureRecognizer {
     const {
       indexTip, thumbTip, confidence, handIndex,
       orientation, pose, fingerCount, gesture,
+      normalizedPinchDistance,
     } = result;
 
     let state = this.hands.get(handIndex);
@@ -156,10 +157,8 @@ export class GestureRecognizer {
     const smoothed = smoother.smooth(indexTip);
     state.indexPosition = smoothed;
 
-    // Pinch distance
-    const dx = indexTip.x - thumbTip.x;
-    const dy = indexTip.y - thumbTip.y;
-    const pinchDistance = Math.sqrt(dx * dx + dy * dy);
+    // Pinch distance (normalized by hand size for robustness)
+    const pinchDistance = normalizedPinchDistance;
     state.pinchDistance = pinchDistance;
 
     // Emit pointer-move
