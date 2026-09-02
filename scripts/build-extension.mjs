@@ -14,9 +14,10 @@ const PUBLIC = join(ROOT, 'public');
 
 console.log('🔨 Building ScreenYard extension...\n');
 
-// Step 1: Vite build
+// Step 1: Vite build (use bunx if available, fall back to npx)
 console.log('1/3 Running Vite build...');
-execSync('npx vite build', { cwd: ROOT, stdio: 'inherit' });
+const runner = process.env.BUN ? 'bunx' : 'npx';
+execSync(`${runner} vite build`, { cwd: ROOT, stdio: 'inherit' });
 
 // Step 2: Copy extension assets
 console.log('\n2/3 Copying extension assets...');

@@ -4,14 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "build:ext": "node scripts/generate-icons.mjs && node scripts/build-extension.mjs",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "icons": "node scripts/generate-icons.mjs"
+    "dev": "bun x vite",
+    "build": "bun x tsc -b && bun x vite build",
+    "build:ext": "bun scripts/generate-icons.mjs && bun scripts/build-extension.mjs",
+    "preview": "bun x vite preview",
+    "test": "bun x vitest run",
+    "test:watch": "bun x vitest",
+    "typecheck": "bun x tsc --noEmit",
+    "icons": "bun scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.18",
