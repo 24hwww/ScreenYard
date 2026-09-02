@@ -7,38 +7,48 @@ interface TrashZoneProps {
 }
 
 /**
- * Full-width trash strip at the bottom of the stage.
+ * Full-width trash bar at the bottom of the stage.
  * Appears when dragging any element (mouse or gesture).
- * Drop the element here to delete it.
+ * Gradient from transparent to red, intensifying as the dragged element
+ * gets closer. Drop the element here to delete it.
  */
 export const TrashZone: React.FC<TrashZoneProps> = ({ visible, progress }) => {
-  if (!visible) return null;
-
-  const isHot = progress > 0.5;
+  const p = Math.max(0, Math.min(1, progress));
+  const isHot = p > 0.5;
 
   return (
-    <div className={`trash-zone ${isHot ? 'trash-zone--hot' : ''}`}>
-      {/* Background glow that intensifies with progress */}
+    <div
+      className={`trash-zone ${visible ? 'trash-zone--visible' : ''} ${isHot ? 'trash-zone--hot' : ''}`}
+      style={{
+        // Gradient: transparent → red, opacity intensifies with progress
+        background: `linear-gradient(
+          to top,
+          rgba(239, 68, 68, ${0.15 + p * 0.75}) 0%,
+          rgba(239, 68, 68, ${0.05 + p * 0.3}) 40%,
+          rgba(239, 68, 68, 0) 100%
+        )`,
+      }}
+    >
+      {/* Top edge glow line — brightens with progress */}
       <div
-        className="trash-zone-glow"
-        style={{ opacity: 0.15 + progress * 0.6 }}
+        className="trash-zone-edge"
+        style={{
+          opacity: 0.2 + p * 0.8,
+          boxShadow: `0 0 ${4 + p * 16}px ${1 + p * 4}px rgba(239, 68, 68, ${0.3 + p * 0.7})`,
+        }}
       />
+
       {/* Content */}
       <div className="trash-zone-content">
-        <span className="trash-zone-icon">🗑️</span>
+        <span
+          className="trash-zone-icon"
+          style={{ transform: `scale(${1 + p * 0.4})` }}
+        >
+          {isHot ? '🗑️' : '🗑️'}
+        </span>
         <span className="trash-zone-label">
           {isHot ? 'Soltar para eliminar' : 'Arrastrar aquí para eliminar'}
         </span>
-      </div>
-      {/* Progress bar at the top edge */}
-      <div className="trash-zone-progress">
-        <div
-          className="trash-zone-progress-bar"
-          style={{
-            width: `${progress * 100}%`,
-            background: isHot ? '#ef4444' : '#3b82f6',
-          }}
-        />
       </div>
     </div>
   );

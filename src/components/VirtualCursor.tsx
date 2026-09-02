@@ -7,8 +7,10 @@ interface VirtualCursorProps {
   isPinching: boolean;
   /** 0 = primary, 1 = secondary hand */
   handIndex?: number;
-  /** 0-1 hold progress for 1-finger text activation (primary hand only) */
+  /** 0-1 hold progress for finger-count gesture (primary hand only) */
   holdProgress?: number;
+  /** Label to show during hold (e.g. "Text", "Image", "Switch Camera") */
+  holdLabel?: string;
 }
 
 /**
@@ -21,6 +23,7 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
   isPinching,
   handIndex = 0,
   holdProgress = 0,
+  holdLabel,
 }) => {
   if (!visible) return null;
 
@@ -81,6 +84,11 @@ export const VirtualCursor: React.FC<VirtualCursorProps> = ({
       <div
         className={`virtual-cursor-dot ${isPinching ? 'virtual-cursor-dot--pinching' : ''}`}
       />
+      {/* Hold label (shows what will be spawned) */}
+      {showHoldRing && holdLabel && (
+        <div className="virtual-cursor-hold-label">{holdLabel}</div>
+      )}
+
       {/* Hand index label */}
       {isSecondary && (
         <div className="virtual-cursor-label">R</div>

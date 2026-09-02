@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   WindowManagerState,
+  addWindow,
   removeWindow,
   moveWindow,
   resizeWindow,
@@ -10,11 +11,13 @@ import {
   setEditing,
   updateWindowData,
 } from '../windows/WindowManager';
+import { WindowType } from '../windows/types';
 import { WindowWrapper } from './WindowWrapper';
 import { VirtualCursor } from './VirtualCursor';
 import { TrashZone } from './TrashZone';
 import { EmojiBurst, EmojiItem } from './EmojiBurst';
 import { DebugPanel } from './DebugPanel';
+import { BarcodeScanner } from './BarcodeScanner';
 import { GestureState, GestureEvent } from '../gestures/types';
 import { HandTracker } from '../gestures/HandTracker';
 import { GestureRecognizer } from '../gestures/GestureRecognizer';
@@ -101,14 +104,37 @@ export const Stage: React.FC<StageProps> = ({
   const [cameraStatus, setCameraStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [trackingStatus, setTrackingStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
 
-  // Track last 1-finger state to avoid repeated triggers
+  // Available video devices and current index (for camera switching)
+  const videoDevicesRef = useRef<MediaDeviceInfo[]>([]);
+  const currentDeviceIndexRef = useRef(0);
+
+  // Barcode/QR scanner
+  const [scannerVisible, setScannerVisible] = useState(false);
+
+  // Track last finger count to detect changes
   const lastFingerCountRef = useRef(0);
 
-  // 1-finger hold timer for text editing activation
-  const oneFingerHoldTimerRef = useRef<number | null>(null);
-  const [oneFingerHoldProgress, setOneFingerHoldProgress] = useState(0);
-  const oneFingerHoldStartRef = useRef<{ x: number; y: number } | null>(null);
-  const ONE_FINGER_HOLD_MS = 600;
+  // Hold timer for finger-count gestures (spawn elements / switch camera)
+  const fingerHoldTimerRef = useRef<number | null>(null);
+  const [fingerHoldProgress, setFingerHoldProgress] = useState(0);
+  const fingerHoldStartRef = useRef<{ x: number; y: number } | null>(null);
+  const FINGER_HOLD_MS = 600;
+
+  // Map finger count → element type (1=Text, 2=Image, 3=Shape, 4=Counter)
+  // 5 fingers = camera switch (special, no element spawn)
+  const FINGER_TO_ELEMENT: Record<number, WindowType> = {
+    1: 'text',
+    2: 'image',
+    3: 'shape',
+    4: 'counter',
+  };
+  const FINGER_LABELS: Record<number, string> = {
+    1: 'Text',
+    2: 'Image',
+    3: 'Shape',
+    4: 'Counter',
+    5: 'Switch Camera',
+  };
 
   // Spawn an emoji at a position
   const spawnEmoji = useCallback((emoji: string, x: number, y: number) => {
@@ -135,82 +161,124 @@ export const Stage: React.FC<StageProps> = ({
     [],
   );
 
+  // ─── Camera management ───
+  // Start camera with a specific device ID. If no ID given, uses default.
+  const startCameraWithDevice = useCallback(async (deviceId?: string) => {
+    setCameraStatus('loading');
+
+    try {
+      // Enumerate video devices (only works after permission is granted)
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      videoDevicesRef.current = devices.filter((d) => d.kind === 'videoinput');
+
+      const constraints: MediaStreamConstraints = {
+        video: deviceId
+          ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      return stream;
+    } catch (err) {
+      console.warn('Camera failed:', err);
+      setCameraStatus('error');
+      return null;
+    }
+  }, []);
+
+  // Attach a stream to bg + tracking video, then (re)initialize HandTracker
+  const attachStream = useCallback(async (stream: MediaStream) => {
+    // Stop old stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    // Remove old tracking video
+    if (trackingVideoRef.current) {
+      trackingVideoRef.current.srcObject = null;
+      trackingVideoRef.current.remove();
+    }
+
+    streamRef.current = stream;
+
+    if (bgVideoRef.current) {
+      bgVideoRef.current.srcObject = stream;
+      await bgVideoRef.current.play().catch(() => {});
+    }
+    setCameraStatus('ready');
+
+    const trackingVideo = document.createElement('video');
+    trackingVideo.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;top:-1px;left:-1px;';
+    trackingVideo.autoplay = true;
+    trackingVideo.playsInline = true;
+    trackingVideo.muted = true;
+    trackingVideo.srcObject = stream;
+    await trackingVideo.play().catch(() => {});
+    document.body.appendChild(trackingVideo);
+    trackingVideoRef.current = trackingVideo;
+
+    // Re-initialize HandTracker with new video element
+    const fgEl = foregroundRef.current;
+    await handTracker.initialize(trackingVideo, fgEl?.clientWidth ?? 1280, fgEl?.clientHeight ?? 720);
+    handTracker.start((results) => gestureRecognizer.processAllHands(results));
+    setTrackingStatus('ready');
+  }, []);
+
+  // Switch to the next available camera
+  const switchCamera = useCallback(async () => {
+    const devices = videoDevicesRef.current;
+    if (devices.length <= 1) {
+      console.warn('No other cameras available');
+      return;
+    }
+
+    currentDeviceIndexRef.current = (currentDeviceIndexRef.current + 1) % devices.length;
+    const nextDevice = devices[currentDeviceIndexRef.current];
+
+    setTrackingStatus('loading');
+    handTracker.stop();
+
+    const stream = await startCameraWithDevice(nextDevice.deviceId);
+    if (stream) {
+      await attachStream(stream);
+    } else {
+      setTrackingStatus('error');
+    }
+  }, [startCameraWithDevice, attachStream]);
+
   // ─── Start webcam on mount ───
-  // This effect runs once on mount. In React StrictMode (dev), effects run
-  // twice (mount → cleanup → mount). The `cancelled` flag + `destroy()` in
-  // cleanup ensures no duplicate MediaPipe instances or camera streams.
   useEffect(() => {
     let cancelled = false;
 
-    const startCamera = async () => {
-      setCameraStatus('loading');
+    const init = async () => {
       setTrackingStatus('loading');
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-          audio: false,
-        });
-
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-
-        if (bgVideoRef.current) {
-          bgVideoRef.current.srcObject = stream;
-          await bgVideoRef.current.play();
-        }
-        setCameraStatus('ready');
-
-        const trackingVideo = document.createElement('video');
-        // Visually hidden but still rendered (NOT display:none) so the browser
-        // decodes frames. display:none prevents frame composition.
-        trackingVideo.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;top:-1px;left:-1px;';
-        trackingVideo.autoplay = true;
-        trackingVideo.playsInline = true;
-        trackingVideo.muted = true;
-        trackingVideo.srcObject = stream;
-        await trackingVideo.play();
-        document.body.appendChild(trackingVideo);
-        trackingVideoRef.current = trackingVideo;
-
-        if (cancelled) { cleanup(); return; }
-
-        // Guard: if HandTracker was already initialized (e.g. StrictMode remount),
-        // destroy() is called inside initialize() to clean up the old instance.
-        const fgEl = foregroundRef.current;
-        await handTracker.initialize(trackingVideo, fgEl?.clientWidth ?? 1280, fgEl?.clientHeight ?? 720);
-        handTracker.start((results) => gestureRecognizer.processAllHands(results));
-
-        setTrackingStatus('ready');
-      } catch (err) {
-        console.warn('Camera/Hand tracking failed:', err);
-        if (!cancelled) { setCameraStatus('error'); setTrackingStatus('error'); }
+      const stream = await startCameraWithDevice();
+      if (!stream || cancelled) {
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        return;
       }
+      await attachStream(stream);
     };
 
     const cleanup = () => {
-      // Full teardown: stop rAF loop + destroy MediaPipe landmarker + release GPU
       handTracker.destroy();
-      // Stop all camera tracks
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       }
-      // Remove tracking video from DOM
       if (trackingVideoRef.current) {
         trackingVideoRef.current.srcObject = null;
         trackingVideoRef.current.remove();
         trackingVideoRef.current = null;
       }
-      // Clear background video srcObject
       if (bgVideoRef.current) {
         bgVideoRef.current.srcObject = null;
       }
     };
 
-    startCamera();
+    init();
     return () => { cancelled = true; cleanup(); };
-  }, []);
+  }, [startCameraWithDevice, attachStream]);
 
   // ─── Click background to deselect ───
   const handleStageClick = useCallback(
@@ -367,48 +435,65 @@ export const Stage: React.FC<StageProps> = ({
 
         case 'finger-count': {
           // Only process finger-count from the primary hand (handIndex 0)
-          // to avoid confusion when both hands change finger counts
           if (handIdx !== 0) break;
 
           const prevCount = lastFingerCountRef.current;
           const newCount = event.fingerCount;
 
           // Cancel any pending hold timer when finger count changes
-          if (oneFingerHoldTimerRef.current !== null) {
-            clearTimeout(oneFingerHoldTimerRef.current);
-            oneFingerHoldTimerRef.current = null;
+          if (fingerHoldTimerRef.current !== null) {
+            clearTimeout(fingerHoldTimerRef.current);
+            fingerHoldTimerRef.current = null;
           }
 
-          // 1 finger → start hold timer to open nearest text element for editing
-          if (newCount === 1 && prevCount !== 1) {
-            oneFingerHoldStartRef.current = { x: stageX, y: stageY };
-            setOneFingerHoldProgress(0);
+          // 1-4 fingers → start hold timer to spawn corresponding element
+          // 5 fingers → start hold timer to switch camera
+          // 0 fingers → cancel
+          if (newCount >= 1 && newCount <= 5 && newCount !== prevCount) {
+            fingerHoldStartRef.current = { x: stageX, y: stageY };
+            setFingerHoldProgress(0);
 
-            // Animate progress
+            // Animate progress ring
             const startTime = performance.now();
             const animateProgress = () => {
               const elapsed = performance.now() - startTime;
-              const progress = Math.min(elapsed / ONE_FINGER_HOLD_MS, 1);
-              setOneFingerHoldProgress(progress);
-              if (progress < 1 && oneFingerHoldTimerRef.current !== null) {
+              const progress = Math.min(elapsed / FINGER_HOLD_MS, 1);
+              setFingerHoldProgress(progress);
+              if (progress < 1 && fingerHoldTimerRef.current !== null) {
                 requestAnimationFrame(animateProgress);
               }
             };
             requestAnimationFrame(animateProgress);
 
-            oneFingerHoldTimerRef.current = window.setTimeout(() => {
-              const startPos = oneFingerHoldStartRef.current;
+            fingerHoldTimerRef.current = window.setTimeout(() => {
+              const startPos = fingerHoldStartRef.current;
               if (!startPos) return;
-              const nearestTextId = findNearestText(state.windows, startPos.x, startPos.y);
-              if (nearestTextId) {
-                onStateChange(selectWindow(setEditing(state, nearestTextId, true), nearestTextId));
+
+              if (newCount === 5) {
+                // 5 fingers → switch camera
+                switchCamera();
+              } else if (newCount === 1) {
+                // 1 finger → if near a text element, edit it; otherwise spawn new text
+                const nearestTextId = findNearestText(state.windows, startPos.x, startPos.y);
+                if (nearestTextId) {
+                  onStateChange(selectWindow(setEditing(state, nearestTextId, true), nearestTextId));
+                } else {
+                  onStateChange(addWindow(state, 'text', { x: startPos.x - 140, y: startPos.y - 40 }));
+                }
+              } else {
+                // 2-4 fingers → spawn corresponding element
+                const elementType = FINGER_TO_ELEMENT[newCount];
+                if (elementType) {
+                  onStateChange(addWindow(state, elementType, { x: startPos.x - 75, y: startPos.y - 50 }));
+                }
               }
-              oneFingerHoldTimerRef.current = null;
-              setOneFingerHoldProgress(0);
-            }, ONE_FINGER_HOLD_MS);
-          } else if (newCount !== 1) {
-            setOneFingerHoldProgress(0);
-            oneFingerHoldStartRef.current = null;
+
+              fingerHoldTimerRef.current = null;
+              setFingerHoldProgress(0);
+            }, FINGER_HOLD_MS);
+          } else if (newCount === 0) {
+            setFingerHoldProgress(0);
+            fingerHoldStartRef.current = null;
           }
 
           lastFingerCountRef.current = newCount;
@@ -416,11 +501,14 @@ export const Stage: React.FC<StageProps> = ({
         }
 
         case 'gesture-detected': {
-          // Thumb up → spawn smile emoji at hand position
-          if (event.gesture === 'thumb_up') {
+          // Thumb up (left hand) → spawn emoji
+          if (event.gesture === 'thumb_up' && handIdx === 0) {
             spawnEmoji('👍', stageX, stageY);
-            // Also spawn a smile nearby as visual feedback
             setTimeout(() => spawnEmoji('😊', stageX + 40, stageY - 30), 200);
+          }
+          // Peace sign (right hand) → toggle barcode/QR scanner
+          if (event.gesture === 'peace' && handIdx === 1) {
+            setScannerVisible((prev) => !prev);
           }
           break;
         }
@@ -429,7 +517,7 @@ export const Stage: React.FC<StageProps> = ({
 
     gestureRecognizer.addListener(handleGestureEvent);
     return () => gestureRecognizer.removeListener(handleGestureEvent);
-  }, [state, onStateChange, calculateTrashOverlap, spawnEmoji]);
+  }, [state, onStateChange, calculateTrashOverlap, spawnEmoji, switchCamera]);
 
   return (
     <div
@@ -485,7 +573,8 @@ export const Stage: React.FC<StageProps> = ({
         visible={gestureState.handDetected}
         isPinching={gestureState.isPinching}
         handIndex={0}
-        holdProgress={oneFingerHoldProgress}
+        holdProgress={fingerHoldProgress}
+        holdLabel={fingerHoldProgress > 0 && fingerHoldProgress < 1 ? FINGER_LABELS[lastFingerCountRef.current] : undefined}
       />
       {gestureState.secondHand && (
         <VirtualCursor
@@ -498,6 +587,27 @@ export const Stage: React.FC<StageProps> = ({
 
       {/* Debug panel */}
       <DebugPanel gestureState={gestureState} visible={isDebugVisible} />
+
+      {/* Barcode / QR scanner */}
+      <BarcodeScanner
+        videoRef={bgVideoRef}
+        visible={scannerVisible}
+        onClose={() => setScannerVisible(false)}
+        onResult={(text, format) => {
+          // Spawn a text window with the scanned content at center of stage
+          const fgEl = foregroundRef.current;
+          const rect = fgEl?.getBoundingClientRect();
+          const x = rect ? rect.width / 2 - 140 : 100;
+          const y = rect ? rect.height / 2 - 40 : 100;
+          const newState = addWindow(state, 'text', { x, y });
+          // Find the just-added window and set its content
+          const added = newState.windows[newState.windows.length - 1];
+          onStateChange(updateWindowData(newState, added.id, {
+            kind: 'text',
+            content: `[${format}] ${text}`,
+          } as any));
+        }}
+      />
     </div>
   );
 };
