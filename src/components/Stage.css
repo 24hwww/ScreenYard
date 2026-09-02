@@ -1,0 +1,444 @@
+/* ===== Stage ===== */
+.stage {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+
+.stage--presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+/* ===== Webcam Background ===== */
+.stage-webcam {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* Mirror for natural feel */
+  z-index: 0;
+}
+
+/* ===== Foreground Overlay Layer ===== */
+/* Must share identical coordinate space as .stage-webcam */
+.stage-foreground {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* ===== Status Overlays ===== */
+.stage-status {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+}
+
+.stage-status--error {
+  color: #f87171;
+}
+
+.stage-status-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.stage-status-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Window Wrapper ===== */
+.window-wrapper {
+  position: absolute;
+  border-radius: 6px;
+  overflow: hidden;
+  user-select: none;
+  transition: box-shadow 0.15s ease;
+}
+
+.window-wrapper:hover {
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.4);
+}
+
+.window-wrapper--selected {
+  box-shadow: 0 0 0 2px #3b82f6, 0 4px 24px rgba(59, 130, 246, 0.35);
+}
+
+.window-wrapper--locked {
+  opacity: 0.85;
+}
+
+/* ===== Selection Border ===== */
+.window-selection-border {
+  position: absolute;
+  inset: -2px;
+  border: 2px solid #3b82f6;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* ===== Window Controls ===== */
+.window-controls {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+}
+
+.window-control-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.window-control-btn:hover {
+  background: rgba(0, 0, 0, 0.95);
+}
+
+.window-control-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.85);
+}
+
+/* ===== Resize Handle ===== */
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: se-resize;
+  z-index: 10;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(255, 255, 255, 0.5);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+/* ===== Text Window ===== */
+.text-window {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  border-radius: 6px;
+  text-align: center;
+  line-height: 1.3;
+  word-wrap: break-word;
+  cursor: text;
+}
+
+.text-window--editing {
+  padding: 0;
+}
+
+.text-window-input {
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 12px;
+  resize: none;
+  outline: none;
+}
+
+/* ===== Image Window ===== */
+.image-window {
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.image-window--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+}
+
+/* ===== Shape Window ===== */
+.shape-window {
+  width: 100%;
+  height: 100%;
+}
+
+/* ===== Virtual Cursor ===== */
+.virtual-cursor {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 9999;
+  transition: left 0.05s linear, top 0.05s linear;
+}
+
+.virtual-cursor-ring {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transition: all 0.15s ease;
+}
+
+.virtual-cursor-ring--pinching {
+  width: 18px;
+  height: 18px;
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.virtual-cursor-dot {
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transition: all 0.15s ease;
+}
+
+.virtual-cursor-dot--pinching {
+  width: 10px;
+  height: 10px;
+  background: #3b82f6;
+}
+
+/* ===== Debug Panel ===== */
+.debug-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 12px 16px;
+  min-width: 180px;
+  z-index: 100;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.debug-panel-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #3b82f6;
+  font-size: 13px;
+}
+
+.debug-panel-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+
+.debug-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.debug-value {
+  color: #e0e0e0;
+}
+
+.debug-value--active {
+  color: #22c55e;
+}
+
+.debug-value--pinching {
+  color: #3b82f6;
+  font-weight: 600;
+}
+
+.debug-value--orientation {
+  font-weight: 500;
+}
+
+.debug-value--gesture {
+  color: #a78bfa;
+  font-weight: 600;
+}
+
+.debug-finger-count {
+  font-size: 11px;
+  letter-spacing: -1px;
+}
+
+/* ===== Trash Zone ===== */
+.trash-zone {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  opacity: 0.85;
+}
+
+.trash-zone--hot {
+  opacity: 1;
+}
+
+.trash-zone-icon {
+  font-size: 28px;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+}
+
+.trash-zone-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+}
+
+.trash-zone--hot .trash-zone-label {
+  color: #f87171;
+}
+
+.trash-zone-ring {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* ===== Secondary Cursor ===== */
+.virtual-cursor--secondary .virtual-cursor-ring {
+  border-color: rgba(251, 191, 36, 0.6);
+}
+
+.virtual-cursor--secondary .virtual-cursor-ring--pinching {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.virtual-cursor--secondary .virtual-cursor-dot--pinching {
+  background: #f59e0b;
+}
+
+.virtual-cursor-label {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(251, 191, 36, 0.8);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+/* ===== Debug Panel Hands ===== */
+.debug-panel-hand {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.debug-panel-hand:last-child {
+  border-bottom: none;
+}
+
+.debug-panel-hand-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 4px;
+}
+
+.debug-panel-hand--secondary .debug-panel-hand-title {
+  color: rgba(251, 191, 36, 0.7);
+}
+
+/* ===== Emoji Burst ===== */
+.emoji-burst-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.floating-emoji {
+  position: absolute;
+  font-size: 48px;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+  will-change: transform, opacity;
+}
+
+/* ===== Window Fallback ===== */
+.window-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 14px;
+}
