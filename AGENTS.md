@@ -9,6 +9,9 @@ Vision. La extensión **inyecta una virtual camera** en las páginas de videolla
 (Meet, Zoom, Teams, Discord, etc.) interceptando `navigator.mediaDevices`, por lo
 que ScreenYard aparece como una cámara más — sin OBS, sin drivers nativos.
 
+También soporta **ventana flotante** (Document Picture-in-Picture) para mantener
+el stream activo aunque la pestaña principal quede en background.
+
 ## Stack
 
 - **React 18** + **TypeScript** (strict)
@@ -19,26 +22,29 @@ que ScreenYard aparece como una cámara más — sin OBS, sin drivers nativos.
 - **@zxing/library** para escaneo de códigos de barras/QR (lazy-loaded)
 - **@types/chrome** para tipos de la extension API
 - **sharp** para generar iconos PNG desde SVG (dev dependency)
+- **Bun** como runtime y package manager (opcional, más rápido que npm)
 
 ## Comandos
 
+Los comandos funcionan con `bun run` o `npm run`:
+
 | Comando | Descripción |
 |---|---|
-| `npm run dev` | Servidor de desarrollo Vite |
-| `npm run build` | `tsc -b && vite build` — build de producción a `dist/` |
-| `npm run build:ext` | Genera iconos + build + copia assets de extensión a `dist/` |
-| `npm run preview` | Previsualiza el build de producción |
-| `npm test` | `vitest run` — ejecuta los tests una vez |
-| `npm run test:watch` | Vitest en modo watch |
-| `npm run typecheck` | `tsc --noEmit` — verificación de tipos sin emitir |
-| `npm run icons` | Regenera los iconos PNG en `public/icons/` |
+| `bun run dev` | Servidor de desarrollo Vite |
+| `bun run build` | `tsc -b && vite build` — build de producción a `dist/` |
+| `bun run build:ext` | Genera iconos + build + copia assets de extensión a `dist/` |
+| `bun run preview` | Previsualiza el build de producción |
+| `bun run test` | `vitest run` — ejecuta los tests una vez |
+| `bun run test:watch` | Vitest en modo watch |
+| `bun run typecheck` | `tsc --noEmit` — verificación de tipos sin emitir |
+| `bun run icons` | Regenera los iconos PNG en `public/icons/` |
 
 ### Verificación antes de considerar una tarea completa
 
 Siempre ejecutar antes de entregar:
 
 ```bash
-npm run typecheck && npm test && npm run build
+bun run typecheck && bun run test && bun run build:ext
 ```
 
 Los tres deben pasar sin errores.
@@ -60,13 +66,13 @@ src/
 │   ├── TextWindow.tsx      # Ventana de texto editable (doble-clic o gesto 1 dedo)
 │   ├── ImageWindow.tsx     # Ventana de imagen (URL)
 │   ├── ShapeWindow.tsx     # Ventana de forma (rect/circle/triangle)
-│   ├── VirtualCursor.tsx   # Cursor virtual que sigue al dedo índice
+│   ├── VirtualCursor.tsx   # Cursor virtual con anillo de proximidad de pinch
 │   ├── TrashZone.tsx       # Zona de eliminación en la parte inferior
 │   ├── EmojiBurst.tsx      # Emojis animados (reacción a thumb_up)
 │   ├── DebugPanel.tsx      # Panel de debug de gestos (toggleable)
 │   ├── BarcodeScanner.tsx  # Escáner de códigos de barras/QR (BarcodeDetector + ZXing fallback)
 │   ├── BarcodeScanner.css
-│   ├── VirtualCamera.tsx   # Modo Virtual Camera: composite canvas + WebRTC sender
+│   ├── VirtualCamera.tsx   # Modo Virtual Camera: composite canvas + WebRTC + PiP
 │   └── VirtualCamera.css
 ├── gestures/
 │   ├── types.ts            # Tipos: GestureEvent, GestureState, HandOrientation...
@@ -74,6 +80,8 @@ src/
 │   ├── GestureRecognizer.ts# Convierte landmarks en eventos (pinch, finger-count...)
 │   ├── GestureSmoother.ts  # One Euro Filter para suavizado adaptativo de puntero
 │   └── __tests__/          # Tests de GestureRecognizer, GestureSmoother, coords
+├── hooks/
+│   └── usePictureInPicture.ts # Hook para Document PiP (ventana flotante)
 ├── windows/
 │   ├── types.ts            # Tipos: WindowData, WindowType, TextData, ImageData...
 │   ├── WindowManager.ts    # Reducers puros: add/remove/move/resize/select/lock/edit
@@ -83,13 +91,14 @@ src/
     └── setup.ts            # Setup de Vitest (jest-dom matchers)
 
 public/
-├── manifest.json           # Manifest V3: content_scripts + permissions + host_permissions
+├── manifest.json           # Manifest V3: content_scripts (MAIN+ISOLATED) + CSP + permissions
 ├── background.js           # Service worker: routing de mensajes entre tabs (ScreenYard ↔ Meet)
-├── content_script.js       # Intercepta enumerateDevices + getUserMedia en sites de videollamadas
+├── content_script.js       # Bridge ISOLATED world: postMessage ↔ chrome.runtime
+├── injected.js             # MAIN world: intercepta MediaDevices prototype + instance
 └── icons/                  # Iconos 16/48/128px (generados por scripts/generate-icons.mjs)
 
 scripts/
-├── build-extension.mjs     # Build + copia manifest/background/content_script/icons a dist/
+├── build-extension.mjs     # Build + copia manifest/background/content_script/injected/icons a dist/
 └── generate-icons.mjs      # Genera PNGs desde SVG inline usando sharp
 ```
 
@@ -99,42 +108,75 @@ ScreenYard aparece como "ScreenYard Virtual Camera" en Google Meet, Zoom, Teams,
 Discord, Webex, y cualquier WebRTC video call — sin OBS, sin drivers, sin permisos
 de admin.
 
+### Arquitectura de dos content scripts
+
+Manifest V3 declara **dos content scripts** que Chrome inyecta directamente
+(no via `<script>` tag, que sería bloqueado por el CSP de Meet):
+
+1. **`injected.js`** (`"world": "MAIN"`) — corre en el mundo de la página
+   - Intercepta `MediaDevices.prototype.enumerateDevices` y `getUserMedia`
+   - Añade "ScreenYard Virtual Camera" a la lista de dispositivos
+   - Crea RTCPeerConnection, recibe el canvas track vía WebRTC
+   - NO tiene acceso a `chrome.runtime`
+   - Estrategia de override: prototype → instance (defineProperty) → direct assignment
+
+2. **`content_script.js`** (ISOLATED world, default) — corre en mundo aislado
+   - Tiene acceso a `chrome.runtime` para mensajería con el background
+   - Bridge: `window.postMessage` ↔ `chrome.runtime.sendMessage`
+   - Relaya offers/answers/ICE candidates entre injected.js y background.js
+
+Comunicación: `window.postMessage` entre MAIN e ISOLATED world.
+
 ### Flujo
 
 ```
-1. ScreenYard tab activa VCam → canvas.captureStream(30)
-2. ScreenYard registra con background.js (screenyard-register + stream-ready)
-3. Usuario abre Meet → content_script.js se inyecta (document_start, MAIN world)
-4. Meet llama enumerateDevices() → ve "ScreenYard Virtual Camera"
-5. Usuario selecciona ScreenYard en Settings → Video → Camera
-6. Meet llama getUserMedia({deviceId: 'screenyard-virtual-camera'})
-7. Content script intercepta → pide stream via background
-8. Background reenvía a ScreenYard tab (screenyard-start-webrtc)
-9. ScreenYard crea RTCPeerConnection, añade canvas tracks, envía offer
-10. Background relaya offer al content script
-11. Content script crea answer → recibe track via WebRTC loopback
-12. getUserMedia devuelve el MediaStream → Meet muestra el stage como webcam
+ 1. ScreenYard tab activa VCam → canvas.captureStream(30)
+ 2. ScreenYard registra con background.js (screenyard-register + stream-ready)
+ 3. Usuario abre Meet → injected.js + content_script.js se inyectan (document_start)
+ 4. injected.js overridea MediaDevices.prototype (enumerateDevices + getUserMedia)
+ 5. Meet llama enumerateDevices() → ve "ScreenYard Virtual Camera"
+ 6. Usuario selecciona ScreenYard en Settings → Video → Camera
+ 7. Meet llama getUserMedia({deviceId: 'screenyard-virtual-camera'})
+ 8. injected.js intercepta → postMessage → content_script.js → background.js
+ 9. Background reenvía a ScreenYard tab (screenyard-start-webrtc)
+10. ScreenYard crea RTCPeerConnection, añade canvas tracks, envía offer
+11. Background → content_script.js → postMessage → injected.js
+12. injected.js crea answer → postMessage → content_script.js → background → ScreenYard
+13. WebRTC conectado → stream fluye → getUserMedia devuelve el MediaStream
+14. Meet muestra el stage como webcam
 ```
 
-### Componentes
+### Ventana flotante (Document Picture-in-Picture)
 
-- **`content_script.js`**: inyectado en `meet.google.com`, `*.zoom.us`,
-  `teams.microsoft.com`, `teams.live.com`, `*.webex.com`, `*.discord.com`,
-  `*.slack.com`, `*.whereby.com`, `*.jitsi.org`, `*.8x8.vc`. Intercepta
-  `navigator.mediaDevices.enumerateDevices()` y `getUserMedia()`.
-- **`background.js`**: service worker que enruta mensajes entre tabs. Mantiene
-  `screenyardTabId`, relaya offers/answers/ICE candidates.
-- **`VirtualCamera.tsx`**: composita cámara + elementos en canvas 1280×720 a 30fps,
-  crea RTCPeerConnection con canvas tracks, envía offer al content script.
+Cuando VCam está activo, el panel muestra un botón "🪟 Open floating window"
+(requiere Chrome/Brave 116+). Al clickar:
+
+- Se abre una ventana always-on-top via `document.documentPictureInPicture.requestWindow()`
+- El stage + canvas oculto se mueven a la ventana PiP
+- Cámara, MediaPipe, canvas y gesture tracking siguen funcionando
+- `requestAnimationFrame` de la ventana PiP no se throttlea en background
+- El stream WebRTC se mantiene activo aunque la pestaña principal quede en background
+- Al cerrar la ventana, los elementos se restauran a su posición original
+
+Hook: `src/hooks/usePictureInPicture.ts`
 
 ### Canvas composition
 
 El canvas compone:
-- Cámara de fondo (cover-fit, espejado)
+- Cámara de fondo (cover-fit, espejado con `ctx.scale(-1, 1)`)
 - Text elements (con fuente, color, word-wrap)
 - Shape elements (rect, circle, con stroke)
 - Image elements (placeholder)
 - Bordes de selección azules
+
+**Espejado**: la cámara se espeja para coincidir con el display del stage
+(`scaleX(-1)` en CSS). Los elementos se dibujan en coordenadas de pantalla
+(no espejadas), igual que el foreground del stage. El output del VCam coincide
+exactamente con lo que el usuario ve en la pestaña de ScreenYard.
+
+**windowsRef**: el render loop lee `windowsRef.current` (un ref) en vez de
+`windows` del estado, para que el stream no se recrea cada vez que se mueve
+un elemento.
 
 ## Mapeo de gestos
 
@@ -178,6 +220,41 @@ Setup 3D: `.stage-foreground` con `perspective: 1000px`, `.window-wrapper` con
 `transform-style: preserve-3d`. `AnimatePresence` envuelve la lista de ventanas
 para que las animaciones de exit se reproduzcan antes de remover del DOM.
 
+## Pinch gesture — refinamiento
+
+### Thresholds
+
+| Parámetro | Valor | Descripción |
+|---|---|---|
+| `PINCH_THRESHOLD` | 0.55 | Distancia normalizada para activar pinch |
+| `PINCH_RELEASE_THRESHOLD` | 0.75 | Distancia para soltar (hysteresis) |
+| `PINCH_CONFIRM_FRAMES` | 2 | Frames consecutivos para confirmar pinch-start |
+
+### Hit area expandida
+
+El pinch-start usa 40px de padding alrededor de los elementos para facilitar
+agarrarlos. Si hay overlap, se selecciona el elemento cuyo centro está más cerca
+del pinch. Los elementos donde el pinch cae exactamente dentro tienen prioridad.
+
+### Indicador visual de proximidad
+
+`VirtualCursor` muestra un **anillo amarillo** cuando los dedos se acercan al
+threshold del pinch (proximity > 0.3). El anillo crece y se opacifica conforme
+se acerca el pinch. Funciona para ambas manos.
+
+## Filtrado de falsos positivos (solo manos)
+
+MediaPipe HandLandmarker está entrenado para manos, pero con thresholds bajos
+puede detectar falsos positivos en rostros u otras partes del cuerpo. Tres capas
+de filtrado:
+
+1. **Thresholds de MediaPipe altos**: `minHandDetectionConfidence: 0.7`,
+   `minHandPresenceConfidence: 0.7`, `minTrackingConfidence: 0.6`
+2. **Validación de handSize**: rechaza detecciones donde wrist→middle-MCP
+   es < 0.05 o > 0.5 en coords normalizadas (manos reales: 0.08-0.25)
+3. **Validación de estructura**: index tip debe estar más lejos del wrist
+   que index MCP (los dedos se extienden desde la palma)
+
 ## Tipos de ventana
 
 | Tipo | Componente | Estado |
@@ -197,11 +274,16 @@ para que las animaciones de exit se reproduzcan antes de remover del DOM.
   `onStateChange`, componerlas: `onStateChange(bringToFront(selectWindow(state, id), id))`.
   No llamar `onStateChange` dos veces seguidas con el mismo `state` del closure,
   porque la segunda sobrescribe la primera.
+- **Refs para datos frescos en loops**: El render loop del VCam usa `windowsRef`
+  en vez de `windows` como dependencia del useEffect, para evitar recrear el
+  stream en cada cambio de estado.
 - **CSS modules por componente**: Cada componente tiene su `.css` adyacente.
 - **IDs únicos**: `${type}-${Date.now()}-${random}` en `WindowModel.createWindow`.
 - **zIndex incremental**: `nextZIndex` global en `WindowModel.ts`. `bringToFront`
   calcula `maxZ + 1`.
 - **Lazy loading**: ZXing se carga con dynamic import solo cuando se abre el escáner.
+- **Paths relativos**: Vite config usa `base: './'` para que los assets funcionen
+  tanto en dev (`localhost`) como en extensión (`chrome-extension://ID/`).
 
 ## Testing
 
@@ -216,7 +298,7 @@ para que las animaciones de exit se reproduzcan antes de remover del DOM.
 
 ```
 getUserMedia → <video> oculto → MediaPipe HandLandmarker
-  → landmarks 3D → HandTracker (geometría 3D, ángulos, handSize)
+  → landmarks 3D → HandTracker (geometría 3D, ángulos, handSize, filtrado)
   → GestureRecognizer (pinch normalizado, finger-count, gesture-detected)
   → GestureSmoother (One Euro Filter adaptativo)
   → GestureEvent → Stage.tsx → acciones (drag, edit, emoji)
@@ -227,13 +309,17 @@ getUserMedia → <video> oculto → MediaPipe HandLandmarker
 - **One Euro Filter** (`GestureSmoother.ts`): suavizado adaptativo que reduce
   jitter a baja velocidad y lag a alta velocidad. Reemplaza el EMA fijo.
 - **Pinch normalizado por tamaño de mano**: `normalizedPinch = pinchDist / handSize`
-  donde `handSize = dist3D(wrist, middle_mcp)`. Thresholds unitless (0.45/0.60).
+  donde `handSize = dist3D(wrist, middle_mcp)`. Thresholds unitless (0.55/0.75).
+- **Pinch con confirmación de frames**: pinch debe sostenerse 2 frames antes
+  de emitir pinch-start (reduce falsos positivos de MediaPipe noise).
 - **Finger counting con ángulos 3D**: usa `angle3D(MCP, PIP, DIP) > 160°` en
   lugar de comparar coordenadas Y. Robusto a rotación y ángulo de cámara.
-- **Filtrado por confianza**: detecciones con `visibility < 0.5` se descartan.
+- **Filtrado por confianza**: detecciones con `confidence < 0.5` se descartan.
+  Thresholds de MediaPipe: `minHandDetectionConfidence: 0.7`.
+- **Filtrado de falsos positivos**: handSize sanity check (0.05-0.5) +
+  validación de estructura de dedos (index tip más lejos del wrist que index MCP).
 - **requestVideoFrameCallback**: sincroniza la inferencia con los frames reales
-  de la webcam (más eficiente que `requestAnimationFrame`). Fallback automático
-  a rAF si rVFC no dispara en 500ms (ej. video oculto con display:none).
+  de la webcam. Fallback automático a rAF si rVFC no dispara en 500ms.
 - **Fallback GPU→CPU**: si la inicialización con `delegate: 'GPU'` falla,
   reintenta con `delegate: 'CPU'`.
 - **Hold delay de 600ms para 1-finger**: el gesto de 1 dedo requiere sostenerse
@@ -254,16 +340,27 @@ Ver `docs/gesture-precision-audit.md` para el análisis completo.
 - **MediaPipe se carga localmente**: WASM y modelo se sirven desde `public/mediapipe/`
   (no CDN). La extensión funciona offline. El script `build:ext` copia estos archivos
   a `dist/mediapipe/` automáticamente.
+- **CSP de la extensión**: `manifest.json` declara
+  `"content_security_policy": { "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" }`
+  para permitir que MediaPipe cargue WebAssembly.
 - **Cámara obligatoria**: `Stage` pide `getUserMedia` al montar. Sin permiso de
   cámara, muestra error pero la app no es funcional.
 - **Manifest V3**: `public/manifest.json` pide `activeTab`, `tabs`, `scripting`,
-  `storage` + `host_permissions: <all_urls>`. El content script se inyecta en
-  sites de videollamadas (Meet, Zoom, Teams, etc.) en `document_start` + `world: MAIN`.
-- **Build de extensión**: `npm run build:ext` genera `dist/` listo para cargar
+  `storage` + `host_permissions: <all_urls>`. Dos content scripts: `injected.js`
+  en `world: MAIN` + `content_script.js` en ISOLATED world. Ambos en `document_start`,
+  `all_frames: false` (solo top-level frame).
+- **Build de extensión**: `bun run build:ext` genera `dist/` listo para cargar
   como extensión desempaquetada en `chrome://extensions/`. Copia manifest,
-  background.js, content_script.js, icons, y mediapipe.
+  background.js, content_script.js, injected.js, icons, y mediapipe.
 - **Virtual Camera**: el modo VCam compone el stage en un canvas 1280×720 a 30fps
   y lo envía vía WebRTC loopback al content script de la videollamada. Sin OBS.
+- **Ventana flotante**: Document PiP (Chrome 116+) mantiene el stream activo
+  cuando la pestaña principal va a background. El render loop usa el RAF de la
+  ventana PiP (no se throttlea).
+- **Dev vs extensión**: `VirtualCamera.tsx` detecta si corre como extensión
+  (`chrome.runtime.id`) o dev server. En dev, el VCam preview funciona pero la
+  cámara virtual no aparece en Meet (el content script solo se inyecta como
+  extensión). El stream está disponible en `window.__screenYardVirtualCameraStream`.
 
 ## Bugs conocidos / limitaciones
 
@@ -277,5 +374,9 @@ Ver `docs/gesture-precision-audit.md` para el análisis completo.
   del módulo.
 - Virtual Camera: los elementos `image` se renderizan como placeholder en el
   canvas composite (no se dibuja la imagen real).
-- Virtual Camera: el content script en `world: MAIN` puede no tener acceso a
-  `chrome.runtime` en algunos navegadores. Hay fallback via CustomEvent.
+- Virtual Camera: **Brave Shields** puede bloquear la modificación de
+  `MediaDevices.prototype`. Si ScreenYard no aparece en Meet, desactivar
+  Shields para `meet.google.com` o probar en Chrome.
+- Virtual Camera: el ID de la extensión cambia cada vez que se hace "Load
+  unpacked" sin clave RSA. Para un ID determinístico, generar un par de claves
+  y añadir `"key"` al manifest.
