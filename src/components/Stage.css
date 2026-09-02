@@ -479,3 +479,30 @@
   color: rgba(255, 255, 255, 0.3);
   font-size: 14px;
 }
+
+/* ===== Scan Toast ===== */
+.scan-toast {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  background: rgba(22, 163, 74, 0.95);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: scan-toast-slide 0.3s ease;
+}
+
+@keyframes scan-toast-slide {
+  from { opacity: 0; transform: translate(-50%, -20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

@@ -127,6 +127,10 @@ export const Stage: React.FC<StageProps> = ({
   // Barcode/QR scanner
   const [scannerVisible, setScannerVisible] = useState(false);
 
+  // Toast notification for scanned codes
+  const [scanToast, setScanToast] = useState<string | null>(null);
+  const scanToastTimerRef = useRef<number | null>(null);
+
   // Track last finger count to detect changes
   const lastFingerCountRef = useRef(0);
 
@@ -619,14 +623,24 @@ export const Stage: React.FC<StageProps> = ({
           const x = rect ? rect.width / 2 - 140 : 100;
           const y = rect ? rect.height / 2 - 40 : 100;
           const newState = addWindow(state, 'text', { x, y });
-          // Find the just-added window and set its content
           const added = newState.windows[newState.windows.length - 1];
           onStateChange(updateWindowData(newState, added.id, {
             kind: 'text',
-            content: `[${format}] ${text}`,
+            content: text,
           } as any));
+          // Show toast notification
+          setScanToast(`✅ ${format}: ${text.length > 40 ? text.slice(0, 40) + '…' : text}  —  copiado al portapapeles`);
+          if (scanToastTimerRef.current) clearTimeout(scanToastTimerRef.current);
+          scanToastTimerRef.current = window.setTimeout(() => setScanToast(null), 4000);
         }}
       />
+
+      {/* Scan result toast */}
+      {scanToast && (
+        <div className="scan-toast" onClick={() => setScanToast(null)}>
+          {scanToast}
+        </div>
+      )}
     </div>
   );
 };

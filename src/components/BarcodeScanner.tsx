@@ -4,7 +4,8 @@ import './BarcodeScanner.css';
 // Lazy-loaded to avoid bloating the initial bundle
 type ZXingResult = { getText: () => string; getBarcodeFormat: () => any };
 type ZXingReader = {
-  decodeBitmap: (bitmap: ImageBitmap) => Promise<ZXingResult>;
+  decodeFromImageElement: (img: HTMLImageElement) => Promise<ZXingResult>;
+  decodeFromImageUrl: (url: string) => Promise<ZXingResult>;
 };
 let zxingReaderPromise: Promise<ZXingReader> | null = null;
 async function getZxingReader(): Promise<ZXingReader> {
@@ -17,31 +18,39 @@ async function getZxingReader(): Promise<ZXingReader> {
 }
 
 interface BarcodeScannerProps {
-  /** Stream from the camera to scan */
   videoRef: React.RefObject<HTMLVideoElement | null>;
   visible: boolean;
   onClose: () => void;
-  /** Called when a code is successfully scanned/pasted */
   onResult: (text: string, format: string) => void;
 }
 
-interface ScanResult {
-  text: string;
-  format: string;
-  timestamp: number;
-}
+const SCAN_INTERVAL_MS = 400;
 
-const SCAN_INTERVAL_MS = 500; // throttle: scan every 500ms, not every frame
+// Generate a beep sound using Web Audio API (no external file needed)
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880; // A5 — pleasant "success" tone
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+    ctx.close();
+  } catch {
+    // AudioContext not available — silent fail
+  }
+}
 
 /**
  * Barcode / QR code scanner.
- * Scans directly from the existing camera video element — no second camera
- * stream needed. The MediaStream is shared between the background video and
- * the scanner.
- *
- * Uses the native BarcodeDetector API (Chrome/Edge) when available,
- * falls back to @zxing/library (Firefox/Safari/all browsers).
- * Also supports pasting an image from the clipboard (Ctrl+V) to scan.
+ * Captures frames from the camera video to a canvas, then decodes.
+ * Uses native BarcodeDetector (Chrome/Edge) or @zxing/library (all browsers).
+ * On success: plays a beep, copies to clipboard, auto-closes, shows result.
  */
 export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
   videoRef,
@@ -53,64 +62,67 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
   const nativeDetectorRef = useRef<any>(null);
   const scanningRef = useRef(false);
   const [scanning, setScanning] = useState(false);
-  const [lastResult, setLastResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [engine, setEngine] = useState<string>('');
 
   const hasNative = typeof (window as any).BarcodeDetector !== 'undefined';
 
-  // Emit result with debounce
-  const emitResult = useCallback((text: string, format: string) => {
-    const now = Date.now();
-    setLastResult((prev) => {
-      if (prev && prev.text === text && now - prev.timestamp < 2000) {
-        return prev; // skip duplicate within 2s
-      }
-      onResult(text, format);
-      return { text, format, timestamp: now };
-    });
-  }, [onResult]);
+  // Handle successful scan: beep + clipboard + callback + close
+  const handleScanSuccess = useCallback((text: string, format: string) => {
+    playBeep();
+    // Copy to clipboard
+    navigator.clipboard.writeText(text).catch(() => {});
+    // Notify parent (spawns text window with result)
+    onResult(text, format);
+    // Auto-close the scanner modal
+    onClose();
+  }, [onResult, onClose]);
 
-  // Decode one frame from the video element
+  // Decode one frame: draw video to canvas, then detect
   const decodeFrame = useCallback(async (): Promise<void> => {
-    if (scanningRef.current) return; // skip if previous decode still running
+    if (scanningRef.current) return;
     const video = videoRef.current;
-    if (!video || video.readyState < 2) {
-      console.debug('[scanner] video not ready:', video?.readyState);
-      return;
-    }
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return;
 
     scanningRef.current = true;
     try {
+      // Capture frame to canvas at full resolution (no mirror — raw frame)
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
       if (hasNative) {
-        // Native BarcodeDetector can detect directly from a video element
         if (!nativeDetectorRef.current) {
           const formats = await (window as any).BarcodeDetector.getSupportedFormats();
-          console.debug('[scanner] native formats:', formats);
           nativeDetectorRef.current = new (window as any).BarcodeDetector({ formats });
         }
-        const codes = await nativeDetectorRef.current.detect(video);
-        console.debug('[scanner] native detect result:', codes?.length, 'codes');
+        const codes = await nativeDetectorRef.current.detect(canvas);
         if (codes && codes.length > 0) {
-          emitResult(codes[0].rawValue, codes[0].format);
+          handleScanSuccess(codes[0].rawValue, codes[0].format);
+          return;
         }
       } else {
-        // ZXing: create an ImageBitmap from the current video frame, then decode
-        const bitmap = await createImageBitmap(video);
-        console.debug('[scanner] bitmap:', bitmap.width, 'x', bitmap.height);
+        // ZXing: convert canvas to image element and decode
         const reader = await getZxingReader();
-        const result = await reader.decodeBitmap(bitmap);
+        const dataUrl = canvas.toDataURL('image/png');
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
+        const result = await reader.decodeFromImageElement(img);
         if (result) {
-          emitResult(result.getText(), result.getBarcodeFormat()?.toString() || 'UNKNOWN');
+          handleScanSuccess(result.getText(), result.getBarcodeFormat()?.toString() || 'UNKNOWN');
+          return;
         }
-        bitmap.close?.();
       }
-    } catch (err) {
-      console.debug('[scanner] decode error:', err);
+    } catch {
+      // no code found — normal, keep scanning
     } finally {
       scanningRef.current = false;
     }
-  }, [hasNative, videoRef, emitResult]);
+  }, [hasNative, videoRef, handleScanSuccess]);
 
   // Start scanning interval when visible
   useEffect(() => {
@@ -120,10 +132,13 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
     setScanning(true);
     setEngine(hasNative ? 'BarcodeDetector (native)' : '@zxing/library');
 
-    // Scan every SCAN_INTERVAL_MS — much more efficient than every rAF frame
-    intervalRef.current = window.setInterval(decodeFrame, SCAN_INTERVAL_MS);
+    // Small delay to let the video element settle
+    const startTimer = setTimeout(() => {
+      intervalRef.current = window.setInterval(decodeFrame, SCAN_INTERVAL_MS);
+    }, 300);
 
     return () => {
+      clearTimeout(startTimer);
       if (intervalRef.current !== null) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -133,7 +148,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
     };
   }, [visible, hasNative, decodeFrame]);
 
-  // Paste from clipboard (Ctrl+V) — scan image for codes
+  // Paste from clipboard (Ctrl+V)
   useEffect(() => {
     if (!visible) return;
 
@@ -148,26 +163,37 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
 
           try {
             const bitmap = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) continue;
+            ctx.drawImage(bitmap, 0, 0);
+            bitmap.close?.();
+
             if (hasNative) {
               if (!nativeDetectorRef.current) {
                 const formats = await (window as any).BarcodeDetector.getSupportedFormats();
                 nativeDetectorRef.current = new (window as any).BarcodeDetector({ formats });
               }
-              const codes = await nativeDetectorRef.current.detect(bitmap);
+              const codes = await nativeDetectorRef.current.detect(canvas);
               if (codes && codes.length > 0) {
-                emitResult(codes[0].rawValue, codes[0].format);
-              } else {
-                setError('No barcode/QR found in pasted image');
+                handleScanSuccess(codes[0].rawValue, codes[0].format);
+                return;
               }
             } else {
               const reader = await getZxingReader();
-              const result = await reader.decodeBitmap(bitmap);
+              const dataUrl = canvas.toDataURL('image/png');
+              const img = new Image();
+              img.src = dataUrl;
+              await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
+              const result = await reader.decodeFromImageElement(img);
               if (result) {
-                emitResult(result.getText(), result.getBarcodeFormat()?.toString() || 'UNKNOWN');
+                handleScanSuccess(result.getText(), result.getBarcodeFormat()?.toString() || 'UNKNOWN');
+                return;
               }
             }
-            bitmap.close?.();
-            setError(null);
+            setError('No barcode/QR found in pasted image');
           } catch (err) {
             console.warn('Paste scan failed:', err);
             setError('No barcode/QR found in pasted image');
@@ -178,7 +204,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [visible, hasNative, emitResult]);
+  }, [visible, hasNative, handleScanSuccess]);
 
   if (!visible) return null;
 
@@ -186,21 +212,19 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
     <div className="barcode-scanner-overlay" onClick={onClose}>
       <div className="barcode-scanner-panel" onClick={(e) => e.stopPropagation()}>
         <div className="barcode-scanner-header">
-          <span className="barcode-scanner-title">📷 Barcode / QR Scanner</span>
+          <span className="barcode-scanner-title">📷 Escáner de Código</span>
           <button className="barcode-scanner-close" onClick={onClose}>✕</button>
         </div>
 
-        {/* Engine badge */}
         {engine && (
-          <div className="barcode-scanner-engine">Engine: {engine}</div>
+          <div className="barcode-scanner-engine">Motor: {engine}</div>
         )}
 
-        {/* Live camera preview so the user can aim at the code */}
+        {/* Live camera preview */}
         <div className="barcode-scanner-viewport">
           <video
             className="barcode-scanner-video"
             ref={(el) => {
-              // Mirror the camera stream into the preview
               if (el && videoRef.current && el.srcObject !== videoRef.current.srcObject) {
                 el.srcObject = videoRef.current.srcObject;
                 el.play().catch(() => {});
@@ -211,33 +235,16 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
             muted
           />
           <div className="barcode-scanner-reticle" data-scanning={scanning} />
-          {scanning && <div className="barcode-scanner-status">Scanning…</div>}
+          {scanning && <div className="barcode-scanner-status">Escaneando…</div>}
         </div>
 
-        {/* Error */}
         {error && (
           <div className="barcode-scanner-error">{error}</div>
         )}
 
-        {/* Result */}
-        {lastResult && (
-          <div className="barcode-scanner-result">
-            <div className="barcode-scanner-result-format">{lastResult.format}</div>
-            <div className="barcode-scanner-result-text">{lastResult.text}</div>
-            <button
-              className="barcode-scanner-copy"
-              onClick={() => {
-                navigator.clipboard.writeText(lastResult.text).catch(() => {});
-              }}
-            >
-              Copy
-            </button>
-          </div>
-        )}
-
-        {/* Hint */}
         <div className="barcode-scanner-hint">
-          Point camera at a QR code or barcode, or paste an image (Ctrl+V)
+          Apunta la cámara al código de barras o QR.
+          También puedes pegar una imagen (Ctrl+V)
         </div>
       </div>
     </div>
