@@ -49,6 +49,9 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
   const [fps, setFps] = useState(0);
   const [connectedCalls, setConnectedCalls] = useState(0);
 
+  // Detect if running as extension (chrome.runtime available) or dev server
+  const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
+
   // WebRTC peer connections (one per video call tab that requests the stream)
   const peerConnectionsRef = useRef<Map<number, RTCPeerConnection>>(new Map());
 
@@ -336,6 +339,12 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
 
         <div className="vcam-info">
           <div className="vcam-info-row">
+            <span className="vcam-info-label">Mode:</span>
+            <span className="vcam-info-value">
+              {isExtension ? 'Extension (full)' : 'Dev server (preview only)'}
+            </span>
+          </div>
+          <div className="vcam-info-row">
             <span className="vcam-info-label">Resolution:</span>
             <span className="vcam-info-value">{OUTPUT_WIDTH}×{OUTPUT_HEIGHT}</span>
           </div>
@@ -343,26 +352,53 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
             <span className="vcam-info-label">FPS:</span>
             <span className="vcam-info-value">{fps}</span>
           </div>
-          <div className="vcam-info-row">
-            <span className="vcam-info-label">Calls connected:</span>
-            <span className="vcam-info-value">{connectedCalls}</span>
-          </div>
+          {isExtension && (
+            <div className="vcam-info-row">
+              <span className="vcam-info-label">Calls connected:</span>
+              <span className="vcam-info-value">{connectedCalls}</span>
+            </div>
+          )}
         </div>
 
-        <div className="vcam-instructions">
-          <div className="vcam-instructions-title">📋 Sin OBS — directo en Meet:</div>
-          <ol>
-            <li>Abre ScreenYard (esta pestaña) y activa VCam</li>
-            <li>Abre <strong>Google Meet</strong> (o Zoom/Teams) en otra pestaña</li>
-            <li>Meet → Settings → Video → Camera</li>
-            <li>Selecciona <strong>ScreenYard Virtual Camera</strong></li>
-            <li>¡Listo! Tu stage con gestos aparece como cámara</li>
-          </ol>
-          <div style={{ marginTop: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
-            La extensión intercepta getUserMedia y envía el stream vía WebRTC loopback.
-            Sin OBS, sin drivers, sin permisos de admin.
+        {isExtension ? (
+          <div className="vcam-instructions">
+            <div className="vcam-instructions-title">📋 Sin OBS — directo en Meet:</div>
+            <ol>
+              <li>Abre ScreenYard (esta pestaña) y activa VCam</li>
+              <li>Abre <strong>Google Meet</strong> (o Zoom/Teams) en otra pestaña</li>
+              <li>Meet → Settings → Video → Camera</li>
+              <li>Selecciona <strong>ScreenYard Virtual Camera</strong></li>
+              <li>¡Listo! Tu stage con gestos aparece como cámara</li>
+            </ol>
+            <div style={{ marginTop: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+              La extensión intercepta getUserMedia y envía el stream vía WebRTC loopback.
+              Sin OBS, sin drivers, sin permisos de admin.
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="vcam-instructions">
+            <div className="vcam-instructions-title">⚠ Dev server — VCam preview only</div>
+            <div style={{ color: 'rgba(255,255,255,0.7)', lineHeight: 1.6 }}>
+              Estás en <code>npm run dev</code>. El canvas composite funciona y puedes
+              ver el preview, pero la virtual camera <strong>no aparece en Meet</strong>
+              porque el content script solo se inyecta cuando ScreenYard se carga como
+              extensión.
+            </div>
+            <div style={{ marginTop: 8, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
+              Para usar en Meet:
+              <ol style={{ marginTop: 4 }}>
+                <li><code>npm run build:ext</code></li>
+                <li>Chrome → <code>chrome://extensions/</code> → Developer mode</li>
+                <li>Load unpacked → selecciona <code>dist/</code></li>
+                <li>Click icono ScreenYard → activa VCam → abre Meet</li>
+              </ol>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+              El stream está disponible en <code>window.__screenYardVirtualCameraStream</code>
+              para testing manual o OBS Browser Source.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
