@@ -65,3 +65,14 @@
 .toolbar-btn--presentation:hover {
   background: rgba(34, 197, 94, 0.25);
 }
+
+.toolbar-btn--clear {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+  margin-left: 8px;
+}
+
+.toolbar-btn--clear:hover {
+  background: rgba(239, 68, 68, 0.22);
+}

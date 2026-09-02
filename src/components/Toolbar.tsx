@@ -4,6 +4,7 @@ import './Toolbar.css';
 
 interface ToolbarProps {
   onAddWindow: (type: WindowType) => void;
+  onClearAll: () => void;
   isPresentationMode: boolean;
   onTogglePresentation: () => void;
   isDebugVisible: boolean;
@@ -18,6 +19,7 @@ const windowTypes: { type: WindowType; label: string; icon: string }[] = [
 
 export const Toolbar: React.FC<ToolbarProps> = ({
   onAddWindow,
+  onClearAll,
   isPresentationMode,
   onTogglePresentation,
   isDebugVisible,
@@ -40,6 +42,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             <span className="toolbar-btn-text">{label}</span>
           </button>
         ))}
+        <button
+          className="toolbar-btn toolbar-btn--clear"
+          onClick={onClearAll}
+          title="Clear all elements"
+        >
+          <span className="toolbar-btn-icon">🗑️</span>
+          <span className="toolbar-btn-text">Clear All</span>
+        </button>
       </div>
       <div className="toolbar-section">
         <button

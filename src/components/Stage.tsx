@@ -118,7 +118,7 @@ export const Stage: React.FC<StageProps> = ({
   const fingerHoldTimerRef = useRef<number | null>(null);
   const [fingerHoldProgress, setFingerHoldProgress] = useState(0);
   const fingerHoldStartRef = useRef<{ x: number; y: number } | null>(null);
-  const FINGER_HOLD_MS = 600;
+  const FINGER_HOLD_MS = 2000;
 
   // Map finger count → element type (1=Text, 2=Image, 3=Shape, 4=Counter)
   // 5 fingers = camera switch (special, no element spawn)
@@ -501,11 +501,6 @@ export const Stage: React.FC<StageProps> = ({
         }
 
         case 'gesture-detected': {
-          // Thumb up (left hand) → spawn emoji
-          if (event.gesture === 'thumb_up' && handIdx === 0) {
-            spawnEmoji('👍', stageX, stageY);
-            setTimeout(() => spawnEmoji('😊', stageX + 40, stageY - 30), 200);
-          }
           // Peace sign (right hand) → toggle barcode/QR scanner
           if (event.gesture === 'peace' && handIdx === 1) {
             setScannerVisible((prev) => !prev);

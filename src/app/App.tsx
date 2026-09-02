@@ -23,6 +23,10 @@ export const App: React.FC = () => {
     [],
   );
 
+  const handleClearAll = useCallback(() => {
+    setWindowState(getInitialState());
+  }, []);
+
   const handleTogglePresentation = useCallback(() => {
     setIsPresentationMode((prev) => !prev);
   }, []);
@@ -46,6 +50,7 @@ export const App: React.FC = () => {
     <div className="app">
       <Toolbar
         onAddWindow={handleAddWindow}
+        onClearAll={handleClearAll}
         isPresentationMode={isPresentationMode}
         onTogglePresentation={handleTogglePresentation}
         isDebugVisible={isDebugVisible}
