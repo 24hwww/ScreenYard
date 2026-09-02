@@ -245,5 +245,19 @@
   // Start prototype override immediately
   overridePrototype();
 
-  console.log('[ScreenYard INJ] Injected (MAIN world) loaded');
+  console.log('[ScreenYard INJ] Injected (MAIN world) loaded at', location.href);
+
+  // Diagnostic: test if the override is working
+  setTimeout(function () {
+    if (navigator.mediaDevices) {
+      navigator.mediaDevices.enumerateDevices().then(function (devices) {
+        var screenyard = devices.find(function (d) { return d.deviceId === VIRTUAL_DEVICE_ID; });
+        console.log('[ScreenYard INJ] enumerateDevices returned', devices.length, 'devices, ScreenYard present:', !!screenyard);
+      }).catch(function (e) {
+        console.warn('[ScreenYard INJ] enumerateDevices failed:', e);
+      });
+    } else {
+      console.warn('[ScreenYard INJ] navigator.mediaDevices not available');
+    }
+  }, 2000);
 })();

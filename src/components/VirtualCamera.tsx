@@ -50,6 +50,11 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
   const [fps, setFps] = useState(0);
   const [connectedCalls, setConnectedCalls] = useState(0);
 
+  // Keep windows in a ref so the render loop reads fresh data
+  // without recreating the stream on every window change
+  const windowsRef = useRef(windows);
+  windowsRef.current = windows;
+
   // Detect if running as extension (chrome.runtime available) or dev server
   const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
 
@@ -110,6 +115,19 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       const video = bgVideoRef.current;
       const stage = stageRef.current;
 
+      // Diagnostic: log first few frames
+      if (frameCount === 0) {
+        console.log('[ScreenYard VCam] Render start:', {
+          hasVideo: !!video,
+          videoReady: video?.readyState,
+          videoW: video?.videoWidth,
+          videoH: video?.videoHeight,
+          hasStage: !!stage,
+          stageRect: stage?.getBoundingClientRect(),
+          windows: windowsRef.current.length,
+        });
+      }
+
       // Clear
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
@@ -147,7 +165,7 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
         const scaleX = OUTPUT_WIDTH / stageRect.width;
         const scaleY = OUTPUT_HEIGHT / stageRect.height;
 
-        for (const win of windows) {
+        for (const win of windowsRef.current) {
           const x = win.position.x * scaleX;
           const y = win.position.y * scaleY;
           const w = win.size.width * scaleX;
@@ -234,7 +252,7 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       setStreamActive(false);
       delete (window as any).__screenYardVirtualCameraStream;
     };
-  }, [active, bgVideoRef, stageRef, windows]);
+  }, [active, bgVideoRef, stageRef]);
 
   // ─── WebRTC sender: listen for stream requests from video call tabs ───
   useEffect(() => {
