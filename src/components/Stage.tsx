@@ -534,6 +534,19 @@ export const Stage: React.FC<StageProps> = ({
           // Only process finger-count from the primary hand (handIndex 0)
           if (handIdx !== 0) break;
 
+          // Pose is the authority: if the hand is making a fist, ignore
+          // finger count entirely (fist can misreport 1 finger due to noise)
+          if (event.pose === 'fist') {
+            if (fingerHoldTimerRef.current !== null) {
+              clearTimeout(fingerHoldTimerRef.current);
+              fingerHoldTimerRef.current = null;
+            }
+            setFingerHoldProgress(0);
+            fingerHoldStartRef.current = null;
+            lastFingerCountRef.current = 0;
+            break;
+          }
+
           const prevCount = lastFingerCountRef.current;
           const newCount = event.fingerCount;
 
