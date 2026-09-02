@@ -47,6 +47,7 @@
   }
 
   log('Script loaded at', location.href);
+  log('Version: 2025-01-09-v1 (multi-layered override)');
 
   function sendToContent(msg) {
     window.postMessage({

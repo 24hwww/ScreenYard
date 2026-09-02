@@ -108,5 +108,5 @@
     return false;
   });
 
-  console.log('[ScreenYard CS] Content script (ISOLATED) loaded');
+  console.log('[ScreenYard CS] Content script (ISOLATED) loaded, version: 2025-01-09-v1');
 })();

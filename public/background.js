@@ -178,9 +178,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({
       active: !!screenyardTabId,
       tabId: screenyardTabId,
+      version: '2025-01-09-v1',
     });
     return false;
   }
 
   return false;
 });
+
+console.log('[ScreenYard BG] Background service worker loaded, version: 2025-01-09-v1');
