@@ -1,8 +1,9 @@
 /**
  * ScreenYard Virtual Camera — Injected Script (MAIN world)
  *
- * Runs in the page's main world (injected via <script> tag by content_script.js).
- * Has access to navigator.mediaDevices but NOT to chrome.runtime.
+ * Declared in manifest.json with "world": "MAIN".
+ * Runs in the page's main world — has access to navigator.mediaDevices
+ * but NOT to chrome.runtime.
  *
  * Communicates with content_script.js (ISOLATED world) via window.postMessage.
  *
@@ -19,33 +20,36 @@
   if (window.__screenYardInjected) return;
   window.__screenYardInjected = true;
 
-  const VIRTUAL_DEVICE_ID = 'screenyard-virtual-camera';
-  const VIRTUAL_DEVICE_LABEL = 'ScreenYard Virtual Camera';
+  var VIRTUAL_DEVICE_ID = 'screenyard-virtual-camera';
+  var VIRTUAL_DEVICE_LABEL = 'ScreenYard Virtual Camera';
 
   // ─── State ───
-  let cachedStream = null;
-  let pendingResolve = null;
-  let pendingReject = null;
-  let pc = null;
+  var cachedStream = null;
+  var pendingResolve = null;
+  var pendingReject = null;
+  var pc = null;
+  var interceptionReady = false;
 
   // ─── Helper: send message to content_script.js (ISOLATED world) ───
   function sendToContent(message) {
     window.postMessage({
       source: 'screenyard-injected',
-      ...message,
+      type: message.type,
+      answer: message.answer,
+      candidates: message.candidates,
     }, '*');
   }
 
-  // ─── Helper: receive messages from content_script.js ───
+  // ─── Listen for messages from content_script.js ───
   window.addEventListener('message', function (event) {
     if (event.source !== window) return;
     if (!event.data || event.data.source !== 'screenyard-content') return;
 
-    const msg = event.data;
+    var msg = event.data;
 
-    // ─── WebRTC offer from ScreenYard (relayed via background) ───
+    // ─── WebRTC offer from ScreenYard ───
     if (msg.type === 'webrtc-offer') {
-      console.log('[ScreenYard] Injected: received WebRTC offer');
+      console.log('[ScreenYard INJ] Received WebRTC offer');
       handleWebRTCOffer(msg.sdp);
     }
 
@@ -53,14 +57,14 @@
     if (msg.type === 'ice-candidate') {
       if (pc && msg.candidate) {
         try {
-          pc.addIceCandidate({ candidate: msg.candidate }).catch(() => {});
+          pc.addIceCandidate({ candidate: msg.candidate }).catch(function () {});
         } catch (e) {}
       }
     }
 
     // ─── Stream request error ───
     if (msg.type === 'request-stream-error') {
-      console.warn('[ScreenYard] Injected: stream request error:', msg.error);
+      console.warn('[ScreenYard INJ] Stream request error:', msg.error);
       if (pendingReject) {
         pendingReject(new Error(msg.error));
         pendingReject = null;
@@ -70,7 +74,7 @@
 
     // ─── ScreenYard disconnected ───
     if (msg.type === 'disconnected') {
-      console.warn('[ScreenYard] Injected: ScreenYard disconnected');
+      console.warn('[ScreenYard INJ] ScreenYard disconnected');
       cachedStream = null;
       if (pendingReject) {
         pendingReject(new Error('ScreenYard tab was closed'));
@@ -83,26 +87,19 @@
   // ─── WebRTC: handle offer from ScreenYard ───
   async function handleWebRTCOffer(offerSdp) {
     try {
-      // Close existing PC if any
       if (pc) {
         try { pc.close(); } catch (e) {}
         pc = null;
       }
 
-      pc = new RTCPeerConnection({
-        iceServers: [], // loopback, no STUN needed
-      });
+      pc = new RTCPeerConnection({ iceServers: [] });
 
-      // ─── Receive the canvas track ───
       pc.ontrack = function (event) {
-        console.log('[ScreenYard] Injected: received track from ScreenYard');
+        console.log('[ScreenYard INJ] Received track from ScreenYard');
         cachedStream = event.streams[0];
-
-        // Make sure tracks are enabled
         cachedStream.getTracks().forEach(function (track) {
           track.enabled = true;
         });
-
         if (pendingResolve) {
           pendingResolve(cachedStream);
           pendingResolve = null;
@@ -110,14 +107,10 @@
         }
       };
 
-      // ─── Set remote description (offer from ScreenYard) ───
       await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
-
-      // ─── Create answer ───
-      const answer = await pc.createAnswer();
+      var answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      // ─── Collect ICE candidates ───
       var iceCandidates = [];
       pc.onicecandidate = function (event) {
         if (event.candidate) {
@@ -125,22 +118,16 @@
         }
       };
 
-      // Wait briefly for ICE gathering (loopback should be fast)
+      // Wait for ICE gathering (loopback is fast)
       await new Promise(function (resolve) { setTimeout(resolve, 300); });
 
-      // ─── Send answer + ICE candidates back to ScreenYard via content script ───
-      sendToContent({
-        type: 'webrtc-answer',
-        answer: pc.localDescription.sdp,
-      });
-      sendToContent({
-        type: 'ice-candidates',
-        candidates: iceCandidates,
-      });
+      // Send answer + ICE candidates back to ScreenYard via content script
+      sendToContent({ type: 'webrtc-answer', answer: pc.localDescription.sdp });
+      sendToContent({ type: 'ice-candidates', candidates: iceCandidates });
 
-      console.log('[ScreenYard] Injected: sent WebRTC answer');
+      console.log('[ScreenYard INJ] Sent WebRTC answer');
     } catch (err) {
-      console.error('[ScreenYard] Injected: WebRTC negotiation failed:', err);
+      console.error('[ScreenYard INJ] WebRTC negotiation failed:', err);
       if (pendingReject) {
         pendingReject(err);
         pendingReject = null;
@@ -150,23 +137,31 @@
   }
 
   // ─── Intercept navigator.mediaDevices ───
-  // Wait for mediaDevices to be available (it might not be ready at document_start)
+  // Use Object.defineProperty to override before the page accesses it.
+  // navigator.mediaDevices may not exist at document_start, so we
+  // intercept the property getter on the prototype.
   function setupInterception() {
+    if (interceptionReady) return;
     if (!navigator.mediaDevices) {
-      // Retry shortly — mediaDevices appears once the page has focus/permission
-      setTimeout(setupInterception, 50);
+      // Retry — mediaDevices appears once the page is in a secure context
+      setTimeout(setupInterception, 10);
       return;
     }
 
-    var originalMediaDevices = navigator.mediaDevices;
-    var originalEnumerateDevices = originalMediaDevices.enumerateDevices.bind(originalMediaDevices);
-    var originalGetUserMedia = originalMediaDevices.getUserMedia.bind(originalMediaDevices);
+    var md = navigator.mediaDevices;
+    var origEnumerate = md.enumerateDevices.bind(md);
+    var origGetUserMedia = md.getUserMedia.bind(md);
 
     // ─── Override enumerateDevices ───
-    originalMediaDevices.enumerateDevices = async function () {
-      var devices = await originalEnumerateDevices();
+    md.enumerateDevices = async function () {
+      var devices = [];
+      try {
+        devices = await origEnumerate();
+      } catch (e) {
+        // If permission not granted yet, enumerateDevices may fail
+        // Return just our virtual device
+      }
 
-      // Add our virtual camera if not already present
       var exists = devices.some(function (d) { return d.deviceId === VIRTUAL_DEVICE_ID; });
       if (!exists) {
         devices.push({
@@ -176,13 +171,11 @@
           groupId: 'screenyard-group',
         });
       }
-
       return devices;
     };
 
     // ─── Override getUserMedia ───
-    originalMediaDevices.getUserMedia = async function (constraints) {
-      // Check if the caller is requesting our virtual camera
+    md.getUserMedia = async function (constraints) {
       var videoConstraints = constraints && constraints.video;
       var requestedDeviceId = null;
 
@@ -198,35 +191,24 @@
         }
       }
 
-      var isOurDevice = requestedDeviceId === VIRTUAL_DEVICE_ID;
+      if (requestedDeviceId === VIRTUAL_DEVICE_ID) {
+        console.log('[ScreenYard INJ] getUserMedia intercepted for virtual camera');
 
-      // Also check if Meet is requesting by label
-      if (!isOurDevice && videoConstraints && typeof videoConstraints === 'object') {
-        // Some apps match by label after enumerateDevices
-      }
-
-      if (isOurDevice) {
-        console.log('[ScreenYard] Injected: getUserMedia intercepted for virtual camera');
-
-        // Return cached stream if available and active
         if (cachedStream && cachedStream.active) {
-          console.log('[ScreenYard] Injected: returning cached stream');
+          console.log('[ScreenYard INJ] Returning cached stream');
           return cachedStream;
         }
 
-        // Request stream from ScreenYard via content script → background
+        // Request stream from ScreenYard
         sendToContent({ type: 'request-stream' });
 
-        // Wait for the stream to arrive via WebRTC
         var stream = await new Promise(function (resolve, reject) {
           pendingResolve = resolve;
           pendingReject = reject;
-
-          // Timeout after 15 seconds
           setTimeout(function () {
             if (pendingReject) {
               pendingReject(new Error(
-                'ScreenYard Virtual Camera: timed out waiting for stream. ' +
+                'ScreenYard Virtual Camera: timed out. ' +
                 'Make sure ScreenYard is open and VCam mode is enabled.'
               ));
               pendingResolve = null;
@@ -235,31 +217,30 @@
           }, 15000);
         });
 
-        console.log('[ScreenYard] Injected: stream received, returning to Meet');
+        console.log('[ScreenYard INJ] Stream received, returning to caller');
         return stream;
       }
 
-      // Normal camera request — pass through to real getUserMedia
-      return originalGetUserMedia(constraints);
+      return origGetUserMedia(constraints);
     };
 
-    // ─── Dispatch devicechange so sites pick up the new device ───
-    setTimeout(function () {
-      try {
-        originalMediaDevices.dispatchEvent(new Event('devicechange'));
-      } catch (e) {}
-    }, 500);
-    setTimeout(function () {
-      try {
-        originalMediaDevices.dispatchEvent(new Event('devicechange'));
-      } catch (e) {}
-    }, 2000);
+    interceptionReady = true;
+    console.log('[ScreenYard INJ] Virtual camera interception ready');
 
-    console.log('[ScreenYard] Injected: virtual camera interception ready');
+    // Dispatch devicechange events so sites detect the new device
+    setTimeout(function () {
+      try { md.dispatchEvent(new Event('devicechange')); } catch (e) {}
+    }, 100);
+    setTimeout(function () {
+      try { md.dispatchEvent(new Event('devicechange')); } catch (e) {}
+    }, 1000);
+    setTimeout(function () {
+      try { md.dispatchEvent(new Event('devicechange')); } catch (e) {}
+    }, 3000);
   }
 
-  // Start interception as early as possible
+  // Start interception immediately
   setupInterception();
 
-  console.log('[ScreenYard] Injected (MAIN world) loaded');
+  console.log('[ScreenYard INJ] Injected (MAIN world) loaded');
 })();

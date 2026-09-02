@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ScreenYard — Virtual Camera",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Interactive presentation stage with hand gesture control. Appears as a virtual camera in Google Meet, Zoom, Teams, and any WebRTC video call.",
   "permissions": [
     "activeTab",
@@ -40,6 +40,24 @@
         "https://*.jitsi.org/*",
         "https://*.8x8.vc/*"
       ],
+      "js": ["injected.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://*.zoom.us/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.live.com/*",
+        "https://*.webex.com/*",
+        "https://*.discord.com/*",
+        "https://*.slack.com/*",
+        "https://*.whereby.com/*",
+        "https://*.jitsi.org/*",
+        "https://*.8x8.vc/*"
+      ],
       "js": ["content_script.js"],
       "run_at": "document_start",
       "all_frames": true
@@ -47,7 +65,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected.js", "index.html", "assets/*", "mediapipe/*"],
+      "resources": ["index.html", "assets/*", "mediapipe/*"],
       "matches": ["<all_urls>"]
     }
   ],

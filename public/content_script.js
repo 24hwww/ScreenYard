@@ -1,37 +1,22 @@
 /**
  * ScreenYard Virtual Camera — Content Script (ISOLATED world)
  *
- * Runs in the isolated world (default for content scripts).
+ * Declared in manifest.json with default world (ISOLATED).
  * Has access to chrome.runtime API for messaging with the background SW.
  *
+ * injected.js is declared separately in manifest.json with "world": "MAIN"
+ * and runs in the page's main world. They communicate via window.postMessage.
+ *
  * This script:
- * 1. Injects injected.js into the page's MAIN world (via <script> tag)
- * 2. Bridges postMessage (from injected.js) ↔ chrome.runtime (to background)
- * 3. Handles WebRTC negotiation: receives offers from ScreenYard, sends answers back
+ * 1. Bridges postMessage (from injected.js in MAIN world) ↔ chrome.runtime (to background)
+ * 2. Relays WebRTC offers/answers/ICE candidates between injected.js and background
  */
 
 (function () {
   'use strict';
 
-  // ─── Inject the MAIN world script ───
-  // We inject as a <script> tag so it runs in the page's main world,
-  // where it can override navigator.mediaDevices before the page uses it.
-  try {
-    const script = document.createElement('script');
-    script.src = chrome.runtime.getURL('injected.js');
-    script.onload = function () { this.remove(); };
-    (document.head || document.documentElement).appendChild(script);
-  } catch (e) {
-    console.error('[ScreenYard] Failed to inject script:', e);
-  }
-
-  // ─── WebRTC state ───
-  let pc = null;
-  let resolvePendingStream = null;
-
   // ─── Listen for messages from injected.js (MAIN world) via window.postMessage ───
   window.addEventListener('message', function (event) {
-    // Only accept messages from the same window
     if (event.source !== window) return;
     if (!event.data || event.data.source !== 'screenyard-injected') return;
 
@@ -39,10 +24,10 @@
 
     // ─── Injected script is requesting the ScreenYard stream ───
     if (msg.type === 'request-stream') {
-      console.log('[ScreenYard] Content script: requesting stream from background');
+      console.log('[ScreenYard CS] Requesting stream from background');
       chrome.runtime.sendMessage({ type: 'screenyard-request-stream' }, function (response) {
         if (chrome.runtime.lastError) {
-          console.warn('[ScreenYard] Background error:', chrome.runtime.lastError.message);
+          console.warn('[ScreenYard CS] Background error:', chrome.runtime.lastError.message);
           window.postMessage({
             source: 'screenyard-content',
             type: 'request-stream-error',
@@ -57,13 +42,12 @@
             error: response.error,
           }, '*');
         }
-        // If ok: true, the WebRTC negotiation will happen via separate messages
       });
     }
 
     // ─── Injected script has a WebRTC answer for ScreenYard ───
     if (msg.type === 'webrtc-answer') {
-      console.log('[ScreenYard] Content script: forwarding answer to background');
+      console.log('[ScreenYard CS] Forwarding answer to background');
       chrome.runtime.sendMessage({
         type: 'content-webrtc-answer',
         answer: msg.answer,
@@ -77,19 +61,13 @@
         candidates: msg.candidates,
       });
     }
-
-    // ─── Injected script is ready for an offer ───
-    if (msg.type === 'ready-for-offer') {
-      console.log('[ScreenYard] Content script: injected is ready for offer');
-    }
   });
 
   // ─── Listen for messages from the background service worker ───
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-    // ─── Background is forwarding a WebRTC offer from ScreenYard ───
+    // ─── WebRTC offer from ScreenYard ───
     if (message.type === 'screenyard-webrtc-offer') {
-      console.log('[ScreenYard] Content script: received offer from ScreenYard');
-      // Forward to injected.js via postMessage
+      console.log('[ScreenYard CS] Received offer from ScreenYard, forwarding to injected');
       window.postMessage({
         source: 'screenyard-content',
         type: 'webrtc-offer',
@@ -99,7 +77,7 @@
       return false;
     }
 
-    // ─── Background is forwarding ICE candidates from ScreenYard ───
+    // ─── ICE candidate from ScreenYard ───
     if (message.type === 'screenyard-ice-candidate') {
       window.postMessage({
         source: 'screenyard-content',
@@ -109,7 +87,7 @@
       return false;
     }
 
-    // ─── Background says ScreenYard is disconnected ───
+    // ─── ScreenYard disconnected ───
     if (message.type === 'screenyard-disconnected') {
       window.postMessage({
         source: 'screenyard-content',
@@ -118,7 +96,7 @@
       return false;
     }
 
-    // ─── Background says stream is available ───
+    // ─── Stream available ───
     if (message.type === 'screenyard-stream-available') {
       window.postMessage({
         source: 'screenyard-content',
@@ -130,10 +108,5 @@
     return false;
   });
 
-  // ─── Also forward WebRTC answer back to background ───
-  // The injected.js will send the answer via postMessage,
-  // and we forward it to the background which relays to ScreenYard.
-  // This is handled in the message listener above.
-
-  console.log('[ScreenYard] Content script (ISOLATED) loaded');
+  console.log('[ScreenYard CS] Content script (ISOLATED) loaded');
 })();
