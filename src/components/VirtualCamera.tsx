@@ -170,20 +170,27 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           const w = win.size.width * scaleX;
           const h = win.size.height * scaleY;
 
+          // Text elements: flip X position + mirror text drawing.
+          // Meet mirrors the whole video, so flipped text → un-flipped (readable)
+          // and flipped position → original position.
+          // Non-text elements: drawn normally (camera/shapes don't need readability).
+          const isText = win.type === 'text';
+          const drawX = isText ? OUTPUT_WIDTH - x - w : x;
+
           // Draw rounded background for all element types (except shapes
           // which have their own fill)
           if (win.type !== 'shape') {
             const r = 8 * scaleX;
             ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.lineTo(x + w - r, y);
-            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-            ctx.lineTo(x + w, y + h - r);
-            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-            ctx.lineTo(x + r, y + h);
-            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-            ctx.lineTo(x, y + r);
-            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.moveTo(drawX + r, y);
+            ctx.lineTo(drawX + w - r, y);
+            ctx.quadraticCurveTo(drawX + w, y, drawX + w, y + r);
+            ctx.lineTo(drawX + w, y + h - r);
+            ctx.quadraticCurveTo(drawX + w, y + h, drawX + w - r, y + h);
+            ctx.lineTo(drawX + r, y + h);
+            ctx.quadraticCurveTo(drawX, y + h, drawX, y + h - r);
+            ctx.lineTo(drawX, y + r);
+            ctx.quadraticCurveTo(drawX, y, drawX + r, y);
             ctx.closePath();
             ctx.fillStyle = 'rgba(26, 26, 46, 0.85)';
             ctx.fill();
@@ -198,11 +205,16 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
               ctx.font = `${fontSize}px ${data.fontFamily || 'sans-serif'}`;
               ctx.textBaseline = 'top';
               const lines = data.content.split('\n');
+              // Mirror text: flip horizontally around the element center
+              ctx.save();
+              ctx.translate(drawX + w, 0);
+              ctx.scale(-1, 1);
               let cy = y + 8 * scaleY;
               for (const line of lines) {
-                ctx.fillText(line, x + 10 * scaleX, cy);
+                ctx.fillText(line, 10 * scaleX, cy);
                 cy += fontSize * 1.3;
               }
+              ctx.restore();
             }
           } else if (win.type === 'shape') {
             const data = win.data;
@@ -263,15 +275,15 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           if (win.selected) {
             const r = 8 * scaleX;
             ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.lineTo(x + w - r, y);
-            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-            ctx.lineTo(x + w, y + h - r);
-            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-            ctx.lineTo(x + r, y + h);
-            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-            ctx.lineTo(x, y + r);
-            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.moveTo(drawX + r, y);
+            ctx.lineTo(drawX + w - r, y);
+            ctx.quadraticCurveTo(drawX + w, y, drawX + w, y + r);
+            ctx.lineTo(drawX + w, y + h - r);
+            ctx.quadraticCurveTo(drawX + w, y + h, drawX + w - r, y + h);
+            ctx.lineTo(drawX + r, y + h);
+            ctx.quadraticCurveTo(drawX, y + h, drawX, y + h - r);
+            ctx.lineTo(drawX, y + r);
+            ctx.quadraticCurveTo(drawX, y, drawX + r, y);
             ctx.closePath();
             ctx.strokeStyle = '#3b82f6';
             ctx.lineWidth = 2 * scaleX;
