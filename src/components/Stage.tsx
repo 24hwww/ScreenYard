@@ -392,6 +392,16 @@ export const Stage: React.FC<StageProps> = ({
     startTime: number;
   }>>(new Map());
 
+  // ─── Two-hand pinch resize state ───
+  // When both hands pinch the same element, the distance between hands
+  // controls the element's size. For text, fontSize also scales.
+  const twoHandResizeRef = useRef<{
+    windowId: string;
+    startDistance: number;
+    startSize: { width: number; height: number };
+    startFontSize: number | null;
+  } | null>(null);
+
   // Swipe-to-delete thresholds
   const SWIPE_MIN_DISTANCE = 200; // px — minimum horizontal travel
   const SWIPE_RATIO = 2; // horizontal distance must be 2x vertical
@@ -420,6 +430,51 @@ export const Stage: React.FC<StageProps> = ({
 
       switch (event.type) {
         case 'pointer-move': {
+          // ─── Two-hand resize: scale element based on hand distance ───
+          if (twoHandResizeRef.current && event.isPinching) {
+            const resize = twoHandResizeRef.current;
+            const win = state.windows.find((w) => w.id === resize.windowId);
+            if (!win) {
+              twoHandResizeRef.current = null;
+              break;
+            }
+
+            // Get both hand positions
+            const gs = gestureRecognizer.getState();
+            const pos0 = gs.indexPosition;
+            const pos1 = gs.secondHand?.indexPosition;
+            if (!pos1) break;
+
+            const x0 = pos0.x * rect.width;
+            const y0 = pos0.y * rect.height;
+            const x1 = pos1.x * rect.width;
+            const y1 = pos1.y * rect.height;
+            const currentDist = Math.hypot(x1 - x0, y1 - y0);
+
+            // Scale factor = current distance / start distance
+            const scale = currentDist / resize.startDistance;
+            const newW = Math.max(40, Math.round(resize.startSize.width * scale));
+            const newH = Math.max(30, Math.round(resize.startSize.height * scale));
+
+            // Keep element centered between the two hands
+            const centerX = (x0 + x1) / 2;
+            const centerY = (y0 + y1) / 2;
+            const newX = centerX - newW / 2;
+            const newY = centerY - newH / 2;
+
+            let newState = resizeWindow(state, resize.windowId, { width: newW, height: newH });
+            newState = moveWindow(newState, resize.windowId, { x: newX, y: newY });
+
+            // If text, also scale fontSize proportionally
+            if (resize.startFontSize !== null && win.type === 'text') {
+              const newFontSize = Math.max(8, Math.round(resize.startFontSize * scale));
+              newState = updateWindowData(newState, resize.windowId, { fontSize: newFontSize } as any);
+            }
+
+            onStateChange(newState);
+            break;
+          }
+
           const dragState = gestureDragStateRef.current.get(handIdx);
           if (dragState && event.isPinching) {
             const win = state.windows.find((w) => w.id === dragState.windowId);
@@ -516,11 +571,46 @@ export const Stage: React.FC<StageProps> = ({
             setTrashVisible(true);
             setTrashProgress(0);
             onStateChange(selectWindow(bringToFront(state, win.id), win.id));
+
+            // ─── Two-hand pinch resize detection ───
+            // If the other hand is already pinching the same element,
+            // enter two-hand resize mode.
+            const otherHandIdx = handIdx === 0 ? 1 : 0;
+            const otherDrag = gestureDragStateRef.current.get(otherHandIdx);
+            if (otherDrag && otherDrag.windowId === win.id) {
+              // Both hands are pinching the same element → resize mode
+              const otherPos = otherHandIdx === 0
+                ? gestureRecognizer.getState().indexPosition
+                : gestureRecognizer.getState().secondHand?.indexPosition;
+              if (otherPos) {
+                const otherX = otherPos.x * rect.width;
+                const otherY = otherPos.y * rect.height;
+                const dist = Math.hypot(stageX - otherX, stageY - otherY);
+                const startFontSize = win.type === 'text'
+                  ? (win.data as { fontSize: number }).fontSize
+                  : null;
+                twoHandResizeRef.current = {
+                  windowId: win.id,
+                  startDistance: dist,
+                  startSize: { ...win.size },
+                  startFontSize,
+                };
+                // Clear drag offsets so the element doesn't move
+                if (handIdx === 0) {
+                  setDraggingWindowId(null);
+                  setDragSource(null);
+                }
+              }
+            }
           }
           break;
         }
 
         case 'pinch-end': {
+          // Clean up two-hand resize if active
+          if (twoHandResizeRef.current) {
+            twoHandResizeRef.current = null;
+          }
           const dragState = gestureDragStateRef.current.get(handIdx);
           if (dragState) {
             const win = state.windows.find((w) => w.id === dragState.windowId);
