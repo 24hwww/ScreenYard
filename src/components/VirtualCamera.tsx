@@ -132,13 +132,19 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
-      // The stage displays the camera mirrored (scaleX(-1)) and elements
-      // in mirrored coordinates. To make the VCam output match exactly
-      // what the user sees in the ScreenYard tab, we mirror the entire
-      // canvas: draw the camera mirrored, then draw elements in mirrored
-      // coordinates too.
+      // The stage displays the camera mirrored (scaleX(-1)) for a natural
+      // "mirror" feel, with elements positioned in screen coordinates on top.
+      //
+      // For the VCam output going to Meet/Zoom/Teams, we must NOT mirror the
+      // camera — other participants should see the real (non-mirrored) camera.
+      // Meet mirrors the self-preview, so if we send a mirrored canvas, the
+      // self-preview would double-mirror and text would appear backwards.
+      //
+      // Strategy: draw the REAL (non-mirrored) camera, then draw elements
+      // with mirrored X positions so they appear in the same relative spot
+      // to the camera as they do on the mirrored stage.
 
-      // Draw camera background (cover fit, mirrored to match stage)
+      // Draw camera background (cover fit, NOT mirrored — real camera)
       if (video && video.readyState >= 2) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
@@ -148,28 +154,26 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           const dh = vh * scale;
           const dx = (OUTPUT_WIDTH - dw) / 2;
           const dy = (OUTPUT_HEIGHT - dh) / 2;
-          // Mirror to match the stage display
-          ctx.save();
-          ctx.scale(-1, 1);
-          ctx.drawImage(video, -dx - dw, dy, dw, dh);
-          ctx.restore();
+          ctx.drawImage(video, dx, dy, dw, dh);
         }
       }
 
-      // Draw elements on top — in mirrored coordinates to match the stage
-      // The stage CSS mirrors the video but NOT the foreground layer.
-      // Elements are positioned in screen coordinates (not mirrored).
-      // So we draw them WITHOUT mirroring, matching the stage's foreground.
+      // Draw elements on top — mirror X positions to match the real camera.
+      // The stage shows a mirrored camera, so element at x=100 on the stage
+      // appears next to the user's right hand (which is on the left in the
+      // mirror). In the real (non-mirrored) camera, the right hand is on the
+      // right, so we flip: canvasX = OUTPUT_WIDTH - stageX - width.
       if (stage) {
         const stageRect = stage.getBoundingClientRect();
         const scaleX = OUTPUT_WIDTH / stageRect.width;
         const scaleY = OUTPUT_HEIGHT / stageRect.height;
 
         for (const win of windowsRef.current) {
-          const x = win.position.x * scaleX;
-          const y = win.position.y * scaleY;
           const w = win.size.width * scaleX;
           const h = win.size.height * scaleY;
+          // Mirror X: stage left → canvas right (and vice versa)
+          const x = OUTPUT_WIDTH - (win.position.x * scaleX) - w;
+          const y = win.position.y * scaleY;
 
           // Draw based on type
           if (win.type === 'text') {
