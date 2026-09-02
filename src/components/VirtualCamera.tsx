@@ -132,16 +132,13 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
-      // The VCam output matches exactly what the user sees on the ScreenYard
-      // stage: mirrored camera + elements at stage positions + readable text.
-      //
-      // The stage CSS mirrors the camera (scaleX(-1)) and the HandTracker
-      // mirrors X coordinates to match. Elements are positioned in this
-      // mirrored coordinate space. So we mirror the camera in the canvas
-      // and draw elements at their stage positions → output = stage view.
-      // No extra flipping needed. Text is always drawn normally (readable).
+      // The VCam canvas sends REAL (non-mirrored) camera + flipped text.
+      // Meet mirrors the entire video for viewers, so:
+      // - Camera: real → Meet mirrors → mirror view (left hand on left) ✓
+      // - Text: flipped glyphs → Meet mirrors → readable ✓
+      // - Text position: flipped X → Meet mirrors → original position ✓
 
-      // Draw camera background (cover fit, MIRRORED to match stage display)
+      // Draw camera background (cover fit, REAL camera — NOT mirrored)
       if (video && video.readyState >= 2) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
@@ -151,10 +148,7 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           const dh = vh * scale;
           const dx = (OUTPUT_WIDTH - dw) / 2;
           const dy = (OUTPUT_HEIGHT - dh) / 2;
-          ctx.save();
-          ctx.scale(-1, 1);
-          ctx.drawImage(video, -dx - dw, dy, dw, dh);
-          ctx.restore();
+          ctx.drawImage(video, dx, dy, dw, dh);
         }
       }
 
