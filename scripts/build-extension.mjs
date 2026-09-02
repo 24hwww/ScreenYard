@@ -29,6 +29,10 @@ console.log('  ✓ manifest.json');
 copyFileSync(join(PUBLIC, 'background.js'), join(DIST, 'background.js'));
 console.log('  ✓ background.js');
 
+// Copy content_script.js
+copyFileSync(join(PUBLIC, 'content_script.js'), join(DIST, 'content_script.js'));
+console.log('  ✓ content_script.js');
+
 // Copy icons
 const iconsSrc = join(PUBLIC, 'icons');
 const iconsDist = join(DIST, 'icons');
