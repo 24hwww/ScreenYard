@@ -55,6 +55,8 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
 
   // Picture-in-Picture floating window
   const pip = usePictureInPicture();
+  // Track the active PiP window so the render loop can use its RAF
+  const pipWindowRef = useRef<Window | null>(null);
 
   // WebRTC peer connections (one per video call tab that requests the stream)
   const peerConnectionsRef = useRef<Map<number, RTCPeerConnection>>(new Map());
@@ -216,14 +218,17 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
         lastFpsTime = now;
       }
 
-      rafRef.current = requestAnimationFrame(render);
+      // Use the PiP window's RAF if active (not throttled in background tab)
+      const raf = pipWindowRef.current?.requestAnimationFrame || requestAnimationFrame;
+      rafRef.current = raf(render);
     };
 
     render();
 
     return () => {
       if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
+        const caf = pipWindowRef.current?.cancelAnimationFrame || cancelAnimationFrame;
+        caf(rafRef.current);
         rafRef.current = null;
       }
       setStreamActive(false);
@@ -354,13 +359,16 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
         {pip.isSupported && (
           <div className="vcam-pip-controls">
             {pip.isActive ? (
-              <button className="vcam-pip-btn vcam-pip-btn--active" onClick={pip.closePiP}>
+              <button className="vcam-pip-btn vcam-pip-btn--active" onClick={() => {
+                pip.closePiP();
+                pipWindowRef.current = null;
+              }}>
                 🪟 Close floating window
               </button>
             ) : (
               <button
                 className="vcam-pip-btn"
-                onClick={() => {
+                onClick={async () => {
                   // Move both the stage and the hidden VCam canvas into PiP.
                   // The canvas needs to be in the same window as the stage
                   // so requestAnimationFrame doesn't get throttled when
@@ -383,7 +391,11 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
                     canvas.style.opacity = '0'; // hidden but rendering
                     canvas.style.pointerEvents = 'none';
                     wrapper.appendChild(canvas);
-                    pip.openPiP(wrapper, 480, 270);
+                    await pip.openPiP(wrapper, 480, 270);
+                    // Store the PiP window reference for RAF
+                    // The hook doesn't expose the window directly, but we
+                    // can find it via the wrapper's ownerDocument.defaultView
+                    pipWindowRef.current = wrapper.ownerDocument.defaultView as Window;
                   }
                 }}
               >

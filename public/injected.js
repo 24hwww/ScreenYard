@@ -2,15 +2,16 @@
  * ScreenYard Virtual Camera — Injected Script (MAIN world)
  *
  * Declared in manifest.json with "world": "MAIN".
- * Runs in the page's main world — has access to navigator.mediaDevices
- * but NOT to chrome.runtime.
+ * Runs in the page's main world at document_start.
+ *
+ * Strategy: override MediaDevices.prototype methods so that ALL
+ * instances (including navigator.mediaDevices) use our overrides.
+ * This is more robust than overriding the instance directly because:
+ * 1. It works even before navigator.mediaDevices is available
+ * 2. It applies even if the page caches a reference to enumerateDevices
+ * 3. It's harder for fingerprinting protection to block
  *
  * Communicates with content_script.js (ISOLATED world) via window.postMessage.
- *
- * This script:
- * 1. Intercepts navigator.mediaDevices.enumerateDevices() → adds virtual camera
- * 2. Intercepts navigator.mediaDevices.getUserMedia() → returns ScreenYard stream
- * 3. Handles WebRTC negotiation to receive the canvas stream from ScreenYard
  */
 
 (function () {
@@ -28,15 +29,15 @@
   var pendingResolve = null;
   var pendingReject = null;
   var pc = null;
-  var interceptionReady = false;
 
   // ─── Helper: send message to content_script.js (ISOLATED world) ───
-  function sendToContent(message) {
+  function sendToContent(msg) {
     window.postMessage({
       source: 'screenyard-injected',
-      type: message.type,
-      answer: message.answer,
-      candidates: message.candidates,
+      type: msg.type,
+      answer: msg.answer,
+      candidates: msg.candidates,
+      error: msg.error,
     }, '*');
   }
 
@@ -47,13 +48,11 @@
 
     var msg = event.data;
 
-    // ─── WebRTC offer from ScreenYard ───
     if (msg.type === 'webrtc-offer') {
       console.log('[ScreenYard INJ] Received WebRTC offer');
       handleWebRTCOffer(msg.sdp);
     }
 
-    // ─── ICE candidate from ScreenYard ───
     if (msg.type === 'ice-candidate') {
       if (pc && msg.candidate) {
         try {
@@ -62,17 +61,15 @@
       }
     }
 
-    // ─── Stream request error ───
     if (msg.type === 'request-stream-error') {
       console.warn('[ScreenYard INJ] Stream request error:', msg.error);
       if (pendingReject) {
-        pendingReject(new Error(msg.error));
+        pendingReject(new Error(msg.error || 'Unknown error'));
         pendingReject = null;
         pendingResolve = null;
       }
     }
 
-    // ─── ScreenYard disconnected ───
     if (msg.type === 'disconnected') {
       console.warn('[ScreenYard INJ] ScreenYard disconnected');
       cachedStream = null;
@@ -121,7 +118,6 @@
       // Wait for ICE gathering (loopback is fast)
       await new Promise(function (resolve) { setTimeout(resolve, 300); });
 
-      // Send answer + ICE candidates back to ScreenYard via content script
       sendToContent({ type: 'webrtc-answer', answer: pc.localDescription.sdp });
       sendToContent({ type: 'ice-candidates', candidates: iceCandidates });
 
@@ -136,32 +132,37 @@
     }
   }
 
-  // ─── Intercept navigator.mediaDevices ───
-  // Use Object.defineProperty to override before the page accesses it.
-  // navigator.mediaDevices may not exist at document_start, so we
-  // intercept the property getter on the prototype.
-  function setupInterception() {
-    if (interceptionReady) return;
-    if (!navigator.mediaDevices) {
-      // Retry — mediaDevices appears once the page is in a secure context
-      setTimeout(setupInterception, 10);
+  // ─── Override MediaDevices PROTOTYPE ───
+  // This is the key: we override at the prototype level so ALL instances
+  // get our methods, even if the page already cached a reference.
+  function overridePrototype() {
+    // MediaDevices constructor should be available as a global
+    // very early in the page lifecycle
+    if (typeof MediaDevices === 'undefined') {
+      // Retry aggressively — MediaDevices should appear almost immediately
+      setTimeout(overridePrototype, 1);
       return;
     }
 
-    var md = navigator.mediaDevices;
-    var origEnumerate = md.enumerateDevices.bind(md);
-    var origGetUserMedia = md.getUserMedia.bind(md);
+    var proto = MediaDevices.prototype;
+
+    // Guard against double override
+    if (proto.__screenYardOverridden) return;
+    proto.__screenYardOverridden = true;
+
+    var origEnumerate = proto.enumerateDevices;
+    var origGetUserMedia = proto.getUserMedia;
 
     // ─── Override enumerateDevices ───
-    md.enumerateDevices = async function () {
+    proto.enumerateDevices = async function () {
       var devices = [];
       try {
-        devices = await origEnumerate();
+        devices = await origEnumerate.call(this);
       } catch (e) {
-        // If permission not granted yet, enumerateDevices may fail
-        // Return just our virtual device
+        // enumerateDevices may fail before permission is granted
       }
 
+      // Always ensure our virtual camera is in the list
       var exists = devices.some(function (d) { return d.deviceId === VIRTUAL_DEVICE_ID; });
       if (!exists) {
         devices.push({
@@ -175,7 +176,7 @@
     };
 
     // ─── Override getUserMedia ───
-    md.getUserMedia = async function (constraints) {
+    proto.getUserMedia = async function (constraints) {
       var videoConstraints = constraints && constraints.video;
       var requestedDeviceId = null;
 
@@ -221,26 +222,28 @@
         return stream;
       }
 
-      return origGetUserMedia(constraints);
+      return origGetUserMedia.call(this, constraints);
     };
 
-    interceptionReady = true;
-    console.log('[ScreenYard INJ] Virtual camera interception ready');
+    console.log('[ScreenYard INJ] MediaDevices.prototype overridden');
 
     // Dispatch devicechange events so sites detect the new device
-    setTimeout(function () {
-      try { md.dispatchEvent(new Event('devicechange')); } catch (e) {}
-    }, 100);
-    setTimeout(function () {
-      try { md.dispatchEvent(new Event('devicechange')); } catch (e) {}
-    }, 1000);
-    setTimeout(function () {
-      try { md.dispatchEvent(new Event('devicechange')); } catch (e) {}
-    }, 3000);
+    // We need to dispatch on the actual navigator.mediaDevices instance
+    function dispatchDeviceChange() {
+      try {
+        if (navigator.mediaDevices) {
+          navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+        }
+      } catch (e) {}
+    }
+    setTimeout(dispatchDeviceChange, 100);
+    setTimeout(dispatchDeviceChange, 500);
+    setTimeout(dispatchDeviceChange, 1500);
+    setTimeout(dispatchDeviceChange, 3000);
   }
 
-  // Start interception immediately
-  setupInterception();
+  // Start prototype override immediately
+  overridePrototype();
 
   console.log('[ScreenYard INJ] Injected (MAIN world) loaded');
 })();
