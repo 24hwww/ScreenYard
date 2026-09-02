@@ -75,7 +75,10 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
   const decodeFrame = useCallback(async (): Promise<void> => {
     if (scanningRef.current) return; // skip if previous decode still running
     const video = videoRef.current;
-    if (!video || video.readyState < 2) return;
+    if (!video || video.readyState < 2) {
+      console.debug('[scanner] video not ready:', video?.readyState);
+      return;
+    }
 
     scanningRef.current = true;
     try {
@@ -83,15 +86,18 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
         // Native BarcodeDetector can detect directly from a video element
         if (!nativeDetectorRef.current) {
           const formats = await (window as any).BarcodeDetector.getSupportedFormats();
+          console.debug('[scanner] native formats:', formats);
           nativeDetectorRef.current = new (window as any).BarcodeDetector({ formats });
         }
         const codes = await nativeDetectorRef.current.detect(video);
+        console.debug('[scanner] native detect result:', codes?.length, 'codes');
         if (codes && codes.length > 0) {
           emitResult(codes[0].rawValue, codes[0].format);
         }
       } else {
         // ZXing: create an ImageBitmap from the current video frame, then decode
         const bitmap = await createImageBitmap(video);
+        console.debug('[scanner] bitmap:', bitmap.width, 'x', bitmap.height);
         const reader = await getZxingReader();
         const result = await reader.decodeBitmap(bitmap);
         if (result) {
@@ -99,8 +105,8 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
         }
         bitmap.close?.();
       }
-    } catch {
-      // no code found in this frame — normal
+    } catch (err) {
+      console.debug('[scanner] decode error:', err);
     } finally {
       scanningRef.current = false;
     }

@@ -38,6 +38,22 @@ const gestureRecognizer = new GestureRecognizer(primarySmoother, secondarySmooth
 
 const TRASH_STRIP_HEIGHT = 70;
 
+/** Clamp a window position so it stays within the stage bounds.
+ *  The window can reach the edges but never go past them. */
+function clampToStage(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  stageW: number,
+  stageH: number,
+): { x: number; y: number } {
+  return {
+    x: Math.max(0, Math.min(x, stageW - w)),
+    y: Math.max(0, Math.min(y, stageH - h)),
+  };
+}
+
 /** Find the text element closest to a given point */
 function findNearestText(
   windows: WindowManagerState['windows'],
@@ -322,10 +338,15 @@ export const Stage: React.FC<StageProps> = ({
 
   const handleWindowMove = useCallback(
     (id: string, x: number, y: number) => {
-      onStateChange(moveWindow(state, id, { x, y }));
+      const win = state.windows.find((w) => w.id === id);
+      const fgEl = foregroundRef.current;
+      const rect = fgEl?.getBoundingClientRect();
+      const clamped = win && rect
+        ? clampToStage(x, y, win.size.width, win.size.height, rect.width, rect.height)
+        : { x, y };
+      onStateChange(moveWindow(state, id, clamped));
       if (draggingWindowId === id && dragSource === 'mouse') {
-        const win = state.windows.find((w) => w.id === id);
-        if (win) setTrashProgress(calculateTrashOverlap(x, y, win.size.width, win.size.height));
+        if (win) setTrashProgress(calculateTrashOverlap(clamped.x, clamped.y, win.size.width, win.size.height));
       }
     },
     [state, onStateChange, draggingWindowId, dragSource, calculateTrashOverlap],
@@ -375,11 +396,14 @@ export const Stage: React.FC<StageProps> = ({
         case 'pointer-move': {
           const dragState = gestureDragStateRef.current.get(handIdx);
           if (dragState && event.isPinching) {
+            const win = state.windows.find((w) => w.id === dragState.windowId);
             const newX = stageX - dragState.offset.x;
             const newY = stageY - dragState.offset.y;
-            onStateChange(moveWindow(state, dragState.windowId, { x: newX, y: newY }));
-            const win = state.windows.find((w) => w.id === dragState.windowId);
-            if (win) setTrashProgress(calculateTrashOverlap(newX, newY, win.size.width, win.size.height));
+            const clamped = win
+              ? clampToStage(newX, newY, win.size.width, win.size.height, rect.width, rect.height)
+              : { x: newX, y: newY };
+            onStateChange(moveWindow(state, dragState.windowId, clamped));
+            if (win) setTrashProgress(calculateTrashOverlap(clamped.x, clamped.y, win.size.width, win.size.height));
           }
           break;
         }
