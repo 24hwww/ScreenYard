@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import {
   WindowManagerState,
   addWindow,
@@ -545,6 +546,13 @@ export const Stage: React.FC<StageProps> = ({
           // 1-4 fingers → start hold timer to spawn corresponding element
           // 5 fingers → start hold timer to switch camera
           // 0 fingers → cancel
+          // Block spawning if an element is already selected (avoid conflicts)
+          const hasSelected = state.windows.some((w) => w.selected);
+          if (hasSelected && newCount >= 1 && newCount <= 4) {
+            // Deselect on 0 fingers instead of spawning
+            lastFingerCountRef.current = newCount;
+            break;
+          }
           if (newCount >= 1 && newCount <= 5 && newCount !== prevCount) {
             fingerHoldStartRef.current = { x: stageX, y: stageY };
             setFingerHoldProgress(0);
@@ -627,22 +635,24 @@ export const Stage: React.FC<StageProps> = ({
 
       {/* Layer 2: Foreground elements */}
       <div ref={foregroundRef} className="stage-foreground">
-        {state.windows.map((win) => (
-          <WindowWrapper
-            key={win.id}
-            window={win}
-            onSelect={handleWindowSelect}
-            onMove={handleWindowMove}
-            onResize={handleWindowResize}
-            onBringToFront={(id) => onStateChange(bringToFront(state, id))}
-            onToggleLock={handleToggleLock}
-            onRemove={handleWindowRemove}
-            onEditEnd={handleEditEnd}
-            onDragStart={handleMouseDragStart}
-            onDragEnd={handleMouseDragEnd}
-            swipeProgress={swipingWindowId === win.id ? swipeProgress : 0}
-          />
-        ))}
+        <AnimatePresence>
+          {state.windows.map((win) => (
+            <WindowWrapper
+              key={win.id}
+              window={win}
+              onSelect={handleWindowSelect}
+              onMove={handleWindowMove}
+              onResize={handleWindowResize}
+              onBringToFront={(id) => onStateChange(bringToFront(state, id))}
+              onToggleLock={handleToggleLock}
+              onRemove={handleWindowRemove}
+              onEditEnd={handleEditEnd}
+              onDragStart={handleMouseDragStart}
+              onDragEnd={handleMouseDragEnd}
+              swipeProgress={swipingWindowId === win.id ? swipeProgress : 0}
+            />
+          ))}
+        </AnimatePresence>
       </div>
 
       {/* Trash zone */}

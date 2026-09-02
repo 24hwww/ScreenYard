@@ -19,7 +19,11 @@ export const App: React.FC = () => {
 
   const handleAddWindow = useCallback(
     (type: WindowType) => {
-      setWindowState((prev) => addWindow(prev, type));
+      setWindowState((prev) => {
+        // Block spawning if an element is already selected
+        if (prev.windows.some((w) => w.selected)) return prev;
+        return addWindow(prev, type);
+      });
     },
     [],
   );

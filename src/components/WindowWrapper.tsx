@@ -1,4 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { WindowData, TextData, ImageData, ShapeData } from '../windows/types';
 import { TextWindow } from './TextWindow';
 import { ImageWindow } from './ImageWindow';
@@ -38,6 +39,7 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, winX: 0, winY: 0 });
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
 
@@ -100,7 +102,6 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
 
     const handleMouseUp = () => {
       if (isDragging) {
-        // Calculate final position
         const finalX = dragStart.current.winX;
         const finalY = dragStart.current.winY;
         onDragEnd?.(win.id, finalX, finalY);
@@ -137,34 +138,84 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
     }
   };
 
+  // Compute 3D tilt based on state
+  const isActive = isDragging || swipeProgress > 0;
+  const tiltX = isDragging ? -8 : 0; // tilt up when dragging
+  const tiltY = swipeProgress > 0 ? swipeProgress * 30 : 0; // tilt sideways during swipe
+
+  // Animation variants
+  const motionStyle: React.CSSProperties = {
+    left: win.position.x,
+    top: win.position.y,
+    width: win.size.width,
+    height: win.size.height,
+    zIndex: win.zIndex,
+    cursor: win.locked ? 'default' : isDragging ? 'grabbing' : 'grab',
+  };
+
   return (
-    <div
+    <motion.div
       ref={wrapperRef}
-      className={`window-wrapper ${win.selected ? 'window-wrapper--selected' : ''} ${win.locked ? 'window-wrapper--locked' : ''} ${isDragging ? 'window-wrapper--dragging' : ''} ${swipeProgress > 0 ? 'window-wrapper--swiping' : ''}`}
-      style={{
-        left: win.position.x,
-        top: win.position.y,
-        width: win.size.width,
-        height: win.size.height,
-        zIndex: win.zIndex,
-        cursor: win.locked ? 'default' : isDragging ? 'grabbing' : 'grab',
-        opacity: 1 - swipeProgress * 0.6,
-        transform: `scale(${1 - swipeProgress * 0.15})`,
-        filter: swipeProgress > 0 ? `hue-rotate(${swipeProgress * -60}deg) brightness(${1 + swipeProgress * 0.3})` : undefined,
-        boxShadow: swipeProgress > 0
-          ? `0 0 ${swipeProgress * 30}px rgba(239, 68, 68, ${swipeProgress * 0.8})`
-          : undefined,
+      className={`window-wrapper ${win.selected ? 'window-wrapper--selected' : ''} ${win.locked ? 'window-wrapper--locked' : ''} ${isDragging ? 'window-wrapper--dragging' : ''} ${swipeProgress > 0 ? 'window-wrapper--swiping' : ''} ${win.editing ? 'window-wrapper--editing' : ''}`}
+      style={motionStyle}
+      initial={{ opacity: 0, scale: 0.5, rotateY: -90 }}
+      animate={{
+        opacity: 1 - swipeProgress * 0.7,
+        scale: isActive ? 1 - swipeProgress * 0.15 : (win.selected ? 1.03 : (isHovered ? 1.02 : 1)),
+        rotateX: tiltX,
+        rotateY: tiltY,
+        boxShadow: win.selected
+          ? swipeProgress > 0
+            ? `0 0 ${swipeProgress * 40}px rgba(239, 68, 68, ${swipeProgress * 0.9}), 0 0 0 2px #3b82f6, 0 8px 32px rgba(59, 130, 246, 0.4)`
+            : '0 0 0 2px #3b82f6, 0 8px 32px rgba(59, 130, 246, 0.4)'
+          : swipeProgress > 0
+            ? `0 0 ${swipeProgress * 40}px rgba(239, 68, 68, ${swipeProgress * 0.9}), 0 4px 20px rgba(0,0,0,0.3)`
+            : isDragging
+              ? '0 12px 40px rgba(0, 0, 0, 0.5)'
+              : '0 2px 12px rgba(0, 0, 0, 0.25)',
+        filter: swipeProgress > 0
+          ? `hue-rotate(${swipeProgress * -60}deg) brightness(${1 + swipeProgress * 0.3})`
+          : win.editing
+            ? 'brightness(1.1)'
+            : 'none',
       }}
+      exit={{
+        opacity: 0,
+        scale: 0.3,
+        rotateX: 90,
+        transition: { duration: 0.3, ease: 'easeIn' },
+      }}
+      transition={{
+        type: 'spring',
+        stiffness: 400,
+        damping: 30,
+        opacity: { duration: 0.2 },
+        boxShadow: { duration: 0.2 },
+      }}
+      whileHover={win.locked ? undefined : { scale: win.selected ? 1.03 : 1.02 }}
+      whileTap={win.locked ? undefined : { scale: 0.98 }}
       onMouseDown={handleMouseDown}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       {renderContent()}
 
       {win.selected && !win.locked && (
-        <div className="window-selection-border" />
+        <motion.div
+          className="window-selection-border"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+        />
       )}
 
       {win.selected && (
-        <div className="window-controls">
+        <motion.div
+          className="window-controls"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, type: 'spring', stiffness: 300, damping: 20 }}
+        >
           <button
             className="window-control-btn"
             title={win.locked ? 'Unlock' : 'Lock'}
@@ -185,7 +236,7 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
           >
             ✕
           </button>
-        </div>
+        </motion.div>
       )}
 
       {win.selected && !win.locked && (
@@ -194,6 +245,6 @@ export const WindowWrapper: React.FC<WindowWrapperProps> = ({
           onMouseDown={handleResizeMouseDown}
         />
       )}
-    </div>
+    </motion.div>
   );
 };

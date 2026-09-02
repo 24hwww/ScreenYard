@@ -29,6 +29,7 @@
   position: absolute;
   inset: 0;
   z-index: 1;
+  perspective: 1000px;
 }
 
 /* ===== Status Overlays ===== */
@@ -74,11 +75,21 @@
   border-radius: 6px;
   overflow: hidden;
   user-select: none;
-  transition: box-shadow 0.15s ease, opacity 0.1s ease, transform 0.1s ease, filter 0.1s ease;
+  transform-style: preserve-3d;
+  will-change: transform, opacity, box-shadow;
 }
 
 .window-wrapper--swiping {
-  transition: none;
+  /* framer-motion handles transitions during swipe */
+}
+
+.window-wrapper--editing {
+  animation: window-edit-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes window-edit-pulse {
+  0%, 100% { filter: brightness(1.1); }
+  50% { filter: brightness(1.25); }
 }
 
 .window-wrapper:hover {
