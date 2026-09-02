@@ -132,19 +132,14 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
-      // The stage displays the camera mirrored (scaleX(-1)) for a natural
-      // "mirror" feel, with elements positioned in screen coordinates on top.
+      // Draw everything normally first, then flip the entire canvas at the
+      // end. Meet mirrors the video output, so if we send a pre-mirrored
+      // canvas, Meet's mirror un-mirrors it → text is readable for viewers.
       //
-      // For the VCam output going to Meet/Zoom/Teams, we must NOT mirror the
-      // camera — other participants should see the real (non-mirrored) camera.
-      // Meet mirrors the self-preview, so if we send a mirrored canvas, the
-      // self-preview would double-mirror and text would appear backwards.
-      //
-      // Strategy: draw the REAL (non-mirrored) camera, then draw elements
-      // with mirrored X positions so they appear in the same relative spot
-      // to the camera as they do on the mirrored stage.
+      // We draw: real camera + elements at stage positions + readable text
+      // Then flip the whole canvas as one unit.
 
-      // Draw camera background (cover fit, NOT mirrored — real camera)
+      // Draw camera background (cover fit, real camera)
       if (video && video.readyState >= 2) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
@@ -158,22 +153,17 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
         }
       }
 
-      // Draw elements on top — mirror X positions to match the real camera.
-      // The stage shows a mirrored camera, so element at x=100 on the stage
-      // appears next to the user's right hand (which is on the left in the
-      // mirror). In the real (non-mirrored) camera, the right hand is on the
-      // right, so we flip: canvasX = OUTPUT_WIDTH - stageX - width.
+      // Draw elements at their original stage positions
       if (stage) {
         const stageRect = stage.getBoundingClientRect();
         const scaleX = OUTPUT_WIDTH / stageRect.width;
         const scaleY = OUTPUT_HEIGHT / stageRect.height;
 
         for (const win of windowsRef.current) {
+          const x = win.position.x * scaleX;
+          const y = win.position.y * scaleY;
           const w = win.size.width * scaleX;
           const h = win.size.height * scaleY;
-          // Mirror X: stage left → canvas right (and vice versa)
-          const x = OUTPUT_WIDTH - (win.position.x * scaleX) - w;
-          const y = win.position.y * scaleY;
 
           // Draw based on type
           if (win.type === 'text') {
@@ -230,6 +220,15 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           }
         }
       }
+
+      // Flip the entire canvas horizontally.
+      // Meet mirrors the video output, so sending a pre-flipped canvas
+      // means Meet's mirror un-flips it → text readable for all viewers.
+      // We do this by drawing the canvas onto itself with scaleX(-1).
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(canvas, -OUTPUT_WIDTH, 0);
+      ctx.restore();
 
       // FPS counter
       frameCount++;
