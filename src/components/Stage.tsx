@@ -399,6 +399,9 @@ export const Stage: React.FC<StageProps> = ({
   const [swipeProgress, setSwipeProgress] = useState(0);
   const [swipingWindowId, setSwipingWindowId] = useState<string | null>(null);
 
+  // Track which windows were fist-deleted to avoid repeated deletes
+  const fistDeletedRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     const handleGestureEvent = (event: GestureEvent) => {
       // Update debug state for both hands
@@ -437,6 +440,26 @@ export const Stage: React.FC<StageProps> = ({
               setSwipeProgress(0);
               setSwipingWindowId(null);
             }
+          }
+
+          // Fist gesture: delete the selected element under the fist
+          if (event.pose === 'fist' && !event.isPinching) {
+            const sorted = [...state.windows].sort((a, b) => b.zIndex - a.zIndex);
+            for (const win of sorted) {
+              if (win.locked) continue;
+              if (win.selected &&
+                  stageX >= win.position.x && stageX <= win.position.x + win.size.width &&
+                  stageY >= win.position.y && stageY <= win.position.y + win.size.height) {
+                if (!fistDeletedRef.current.has(win.id)) {
+                  fistDeletedRef.current.add(win.id);
+                  onStateChange(removeWindow(state, win.id));
+                }
+                break;
+              }
+            }
+          } else {
+            // Reset fist-deleted tracking when not making a fist
+            fistDeletedRef.current.clear();
           }
           break;
         }
