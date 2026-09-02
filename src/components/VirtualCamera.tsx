@@ -132,14 +132,16 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
-      // Draw everything normally first, then flip the entire canvas at the
-      // end. Meet mirrors the video output, so if we send a pre-mirrored
-      // canvas, Meet's mirror un-mirrors it → text is readable for viewers.
+      // The VCam output matches exactly what the user sees on the ScreenYard
+      // stage: mirrored camera + elements at stage positions + readable text.
       //
-      // We draw: real camera + elements at stage positions + readable text
-      // Then flip the whole canvas as one unit.
+      // The stage CSS mirrors the camera (scaleX(-1)) and the HandTracker
+      // mirrors X coordinates to match. Elements are positioned in this
+      // mirrored coordinate space. So we mirror the camera in the canvas
+      // and draw elements at their stage positions → output = stage view.
+      // No extra flipping needed. Text is always drawn normally (readable).
 
-      // Draw camera background (cover fit, real camera)
+      // Draw camera background (cover fit, MIRRORED to match stage display)
       if (video && video.readyState >= 2) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
@@ -149,11 +151,14 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           const dh = vh * scale;
           const dx = (OUTPUT_WIDTH - dw) / 2;
           const dy = (OUTPUT_HEIGHT - dh) / 2;
-          ctx.drawImage(video, dx, dy, dw, dh);
+          ctx.save();
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, -dx - dw, dy, dw, dh);
+          ctx.restore();
         }
       }
 
-      // Draw elements at their original stage positions
+      // Draw elements at their original stage positions (text always readable)
       if (stage) {
         const stageRect = stage.getBoundingClientRect();
         const scaleX = OUTPUT_WIDTH / stageRect.width;
@@ -165,7 +170,26 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
           const w = win.size.width * scaleX;
           const h = win.size.height * scaleY;
 
-          // Draw based on type
+          // Draw rounded background for all element types (except shapes
+          // which have their own fill)
+          if (win.type !== 'shape') {
+            const r = 8 * scaleX;
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(26, 26, 46, 0.85)';
+            ctx.fill();
+          }
+
+          // Draw content based on type
           if (win.type === 'text') {
             const data = win.data;
             if (data?.content) {
@@ -173,11 +197,10 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
               const fontSize = (data.fontSize || 16) * scaleX;
               ctx.font = `${fontSize}px ${data.fontFamily || 'sans-serif'}`;
               ctx.textBaseline = 'top';
-              // Word wrap
               const lines = data.content.split('\n');
-              let cy = y + 4;
+              let cy = y + 8 * scaleY;
               for (const line of lines) {
-                ctx.fillText(line, x + 8, cy);
+                ctx.fillText(line, x + 10 * scaleX, cy);
                 cy += fontSize * 1.3;
               }
             }
@@ -194,15 +217,26 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
                 ctx.stroke();
               }
             } else {
-              ctx.fillRect(x, y, w, h);
+              const r = 8 * scaleX;
+              ctx.beginPath();
+              ctx.moveTo(x + r, y);
+              ctx.lineTo(x + w - r, y);
+              ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+              ctx.lineTo(x + w, y + h - r);
+              ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+              ctx.lineTo(x + r, y + h);
+              ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+              ctx.lineTo(x, y + r);
+              ctx.quadraticCurveTo(x, y, x + r, y);
+              ctx.closePath();
+              ctx.fill();
               if (data?.stroke) {
                 ctx.strokeStyle = data.stroke;
                 ctx.lineWidth = (data.strokeWidth || 2) * scaleX;
-                ctx.strokeRect(x, y, w, h);
+                ctx.stroke();
               }
             }
           } else if (win.type === 'image') {
-            // Images are complex to composite from DOM; draw a placeholder
             ctx.fillStyle = 'rgba(100, 100, 100, 0.5)';
             ctx.fillRect(x, y, w, h);
             ctx.fillStyle = '#fff';
@@ -210,25 +244,41 @@ export const VirtualCameraOutput: React.FC<VirtualCameraOutputProps> = ({
             ctx.textAlign = 'center';
             ctx.fillText('[image]', x + w / 2, y + h / 2);
             ctx.textAlign = 'left';
+          } else if (win.type === 'tab') {
+            const data = win.data;
+            // Draw tab header bar
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(x, y, w, 20 * scaleY);
+            ctx.fillStyle = '#ccc';
+            ctx.font = `${11 * scaleX}px sans-serif`;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(data?.title || 'Tab', x + 6 * scaleX, y + 10 * scaleY);
+            ctx.textBaseline = 'top';
+            // Draw placeholder for tab content
+            ctx.fillStyle = 'rgba(50, 50, 80, 0.7)';
+            ctx.fillRect(x, y + 20 * scaleY, w, h - 20 * scaleY);
           }
 
-          // Selection border
+          // Selection border with rounded corners
           if (win.selected) {
+            const r = 8 * scaleX;
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
             ctx.strokeStyle = '#3b82f6';
             ctx.lineWidth = 2 * scaleX;
-            ctx.strokeRect(x, y, w, h);
+            ctx.stroke();
           }
         }
       }
-
-      // Flip the entire canvas horizontally.
-      // Meet mirrors the video output, so sending a pre-flipped canvas
-      // means Meet's mirror un-flips it → text readable for all viewers.
-      // We do this by drawing the canvas onto itself with scaleX(-1).
-      ctx.save();
-      ctx.scale(-1, 1);
-      ctx.drawImage(canvas, -OUTPUT_WIDTH, 0);
-      ctx.restore();
 
       // FPS counter
       frameCount++;
