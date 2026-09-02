@@ -5,6 +5,7 @@ import './Toolbar.css';
 interface ToolbarProps {
   onAddWindow: (type: WindowType) => void;
   onClearAll: () => void;
+  onScan: () => void;
   isPresentationMode: boolean;
   onTogglePresentation: () => void;
   isDebugVisible: boolean;
@@ -20,6 +21,7 @@ const windowTypes: { type: WindowType; label: string; icon: string }[] = [
 export const Toolbar: React.FC<ToolbarProps> = ({
   onAddWindow,
   onClearAll,
+  onScan,
   isPresentationMode,
   onTogglePresentation,
   isDebugVisible,
@@ -42,6 +44,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             <span className="toolbar-btn-text">{label}</span>
           </button>
         ))}
+        <button
+          className="toolbar-btn toolbar-btn--scan"
+          onClick={onScan}
+          title="Scan barcode or QR code"
+        >
+          <span className="toolbar-btn-icon">📷</span>
+          <span className="toolbar-btn-text">Scan</span>
+        </button>
         <button
           className="toolbar-btn toolbar-btn--clear"
           onClick={onClearAll}

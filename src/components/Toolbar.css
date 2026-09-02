@@ -73,6 +73,17 @@
   margin-left: 8px;
 }
 
+.toolbar-btn--scan {
+  background: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.3);
+  color: #c084fc;
+  margin-left: 8px;
+}
+
 .toolbar-btn--clear:hover {
   background: rgba(239, 68, 68, 0.22);
+}
+
+.toolbar-btn--scan:hover {
+  background: rgba(168, 85, 247, 0.22);
 }

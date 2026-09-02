@@ -29,6 +29,8 @@ interface StageProps {
   onStateChange: (state: WindowManagerState) => void;
   isPresentationMode: boolean;
   isDebugVisible: boolean;
+  scannerVisible: boolean;
+  onScannerClose: () => void;
 }
 
 const handTracker = new HandTracker();
@@ -83,6 +85,8 @@ export const Stage: React.FC<StageProps> = ({
   onStateChange,
   isPresentationMode,
   isDebugVisible,
+  scannerVisible,
+  onScannerClose,
 }) => {
   const stageRef = useRef<HTMLDivElement>(null);
   const foregroundRef = useRef<HTMLDivElement>(null);
@@ -124,9 +128,7 @@ export const Stage: React.FC<StageProps> = ({
   const videoDevicesRef = useRef<MediaDeviceInfo[]>([]);
   const currentDeviceIndexRef = useRef(0);
 
-  // Barcode/QR scanner
-  const [scannerVisible, setScannerVisible] = useState(false);
-
+  // Barcode/QR scanner — controlled by parent (toolbar button)
   // Toast notification for scanned codes
   const [scanToast, setScanToast] = useState<string | null>(null);
   const scanToastTimerRef = useRef<number | null>(null);
@@ -570,14 +572,6 @@ export const Stage: React.FC<StageProps> = ({
           lastFingerCountRef.current = newCount;
           break;
         }
-
-        case 'gesture-detected': {
-          // Peace sign (right hand) → toggle barcode/QR scanner
-          if (event.gesture === 'peace' && handIdx === 1) {
-            setScannerVisible((prev) => !prev);
-          }
-          break;
-        }
       }
     };
 
@@ -659,7 +653,7 @@ export const Stage: React.FC<StageProps> = ({
       <BarcodeScanner
         videoRef={bgVideoRef}
         visible={scannerVisible}
-        onClose={() => setScannerVisible(false)}
+        onClose={onScannerClose}
         onResult={(text, format) => {
           // Spawn a text window with the scanned content at center of stage
           const fgEl = foregroundRef.current;

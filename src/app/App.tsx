@@ -15,6 +15,7 @@ export const App: React.FC = () => {
   );
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [isDebugVisible, setIsDebugVisible] = useState(true);
+  const [scannerVisible, setScannerVisible] = useState(false);
 
   const handleAddWindow = useCallback(
     (type: WindowType) => {
@@ -25,6 +26,14 @@ export const App: React.FC = () => {
 
   const handleClearAll = useCallback(() => {
     setWindowState(getInitialState());
+  }, []);
+
+  const handleScan = useCallback(() => {
+    setScannerVisible(true);
+  }, []);
+
+  const handleScannerClose = useCallback(() => {
+    setScannerVisible(false);
   }, []);
 
   const handleTogglePresentation = useCallback(() => {
@@ -51,6 +60,7 @@ export const App: React.FC = () => {
       <Toolbar
         onAddWindow={handleAddWindow}
         onClearAll={handleClearAll}
+        onScan={handleScan}
         isPresentationMode={isPresentationMode}
         onTogglePresentation={handleTogglePresentation}
         isDebugVisible={isDebugVisible}
@@ -61,6 +71,8 @@ export const App: React.FC = () => {
         onStateChange={setWindowState}
         isPresentationMode={isPresentationMode}
         isDebugVisible={isDebugVisible}
+        scannerVisible={scannerVisible}
+        onScannerClose={handleScannerClose}
       />
     </div>
   );
