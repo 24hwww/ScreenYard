@@ -37,6 +37,15 @@
   color: #fff;
 }
 
+.barcode-scanner-engine {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  padding: 3px 8px;
+  align-self: flex-start;
+}
+
 .barcode-scanner-close {
   background: none;
   border: none;
